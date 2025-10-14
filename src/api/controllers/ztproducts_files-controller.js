@@ -3,7 +3,7 @@ const { ZTProductFilesCRUD } = require('../services/ztproducts_files-service');
 
 class ZTProductFilesService extends cds.ApplicationService {
   async init() {
-    this.on('productsCRUD', (req) => {
+    this.on('productsFilesCRUD', (req) => {
       return ZTProductFilesCRUD(req);
     });
   }

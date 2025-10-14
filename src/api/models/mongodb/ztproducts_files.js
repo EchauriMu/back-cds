@@ -1,4 +1,4 @@
-const mongoose = require("mongoose");
+import mongoose from "mongoose";
 
 const ZTPRODUCTS_FILES = new mongoose.Schema(
   {
@@ -13,14 +13,14 @@ const ZTPRODUCTS_FILES = new mongoose.Schema(
       required: true,
       trim: true,
     },
-     IdPresentaOK: {
+    IdPresentaOK: {
       type: String,
-      ref: "ZTPRODUCTS_PRESENTACIONES", // Opcional, si el archivo es de una presentación
+      ref: "ZTPRODUCTS_PRESENTACIONES",
       default: null,
     },
     FILETYPE: {
       type: String,
-      enum: ["IMG", "PDF", "DOC", "VIDEO", "OTHER"], // puedes ampliar según tus tipos
+      enum: ["IMG", "PDF", "DOC", "VIDEO", "OTHER"],
       required: true,
     },
     FILE: {
@@ -63,7 +63,7 @@ const ZTPRODUCTS_FILES = new mongoose.Schema(
     },
   },
   {
-    timestamps: true, // crea createdAt y updatedAt automáticamente
+    timestamps: true,
   }
 );
 
