@@ -1,6 +1,15 @@
 // Importar el modelo mongoose
 const { ZTProduct_FILES } = require('../models/mongodb/ztproducts_files');
 
+//import de middlewares
+const { OK, FAIL, BITACORA, DATA, AddMSG } = require('../../middlewares/respPWA.handler');
+
+
+
+// ------------------------------------------------------
+// Servicio principal solo GetAll con middleware
+// ------------------------------------------------------
+
 async function GetAllZTProductFiles() {
   return await ZTProduct_FILES.find().lean();
 }
@@ -17,6 +26,7 @@ async function CreateZTProductFile(req) {
   if (!data.FILEID || !data.SKUID || !data.FILETYPE || !data.FILE || !data.REGUSER) {
     throw new Error('Faltan campos obligatorios');
   }
+  
   const existe = await ZTProduct_FILES.findOne({ FILEID: data.FILEID });
   if (existe) throw new Error('Ya existe un archivo con ese FILEID');
   const nuevo = await ZTProduct_FILES.create(data);
@@ -64,19 +74,45 @@ async function ActivateZTProductFile(fileid) {
   if (!actualizado) throw new Error('No se encontró el archivo para activar');
   return actualizado.toObject();
 }
-
 async function ZTProductFilesCRUD(req) {
+  let res;
   try {
-    const { procedure, type, fileid } = req.req.query;
-    let res;
+    const { procedure, type, fileid, LoggedUser } = req.req.query;
+
     if (procedure === 'get') {
       if (type === 'all') {
-        res = await GetAllZTProductFiles();
+ 
+        if (req && req._.odataReq) {
+          res = await GetAllZTProductFiles();
+        } else {
+          // Respuesta  con bitácora/metadatos
+          let bitacora = BITACORA();
+          let data = DATA();
+          bitacora.loggedUser = LoggedUser || 'DEFAULT_USER';
+          bitacora.process = 'GETall ZTProductFiles';
+          try {
+            const files = await GetAllZTProductFiles();
+            data.dataRes = files;
+            data.messageUSR = 'Archivos obtenidos correctamente';
+            data.messageDEV = 'GetAllZTProductFiles ejecutado sin errores';
+            data.api = '/api/ztproducts-files/productsFilesCRUD';
+            bitacora = AddMSG(bitacora, data, 'OK', 204, true);
+            res = OK(bitacora);
+          } catch (error) {
+            data.messageUSR = 'Error al obtener los archivos';
+            data.messageDEV = error.message;
+            bitacora = AddMSG(bitacora, data, 'FAIL');
+            console.error('<<Message USR>>', bitacora.messageUSR);
+            console.error('<<Message DEV>>', bitacora.messageDEV);
+            res = FAIL(bitacora);
+          }
+        }
       } else if (type === 'one') {
         res = await GetOneZTProductFile(fileid);
       } else {
         throw new Error('Coloca un tipo de búsqueda válido (all o one)');
       }
+
     } else if (procedure === 'post') {
       res = await CreateZTProductFile(req);
     } else if (procedure === 'put') {
@@ -94,12 +130,16 @@ async function ZTProductFilesCRUD(req) {
     } else {
       throw new Error('Parámetros inválidos o incompletos');
     }
+
     return res;
+
   } catch (error) {
     console.error('Error en ZTProductFilesCRUD:', error);
     return { error: true, message: error.message };
   }
 }
+
+
 
 module.exports = {
   ZTProductFilesCRUD,
