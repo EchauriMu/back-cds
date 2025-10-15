@@ -36,8 +36,30 @@ async function GetOneZTProduct(skuid) {
 // CREATE PRODUCT
 async function CreateZTProduct(req) {
   try {
-    const data = req.req.data;
-    console.log('[ZTProducts] Creando producto:', data);
+    
+    // Obtener datos de diferentes posibles ubicaciones
+    let data = req.req.data || req.data || {};
+    
+    // Remover el campo 'procedure' si existe en los datos
+    if (data.procedure) {
+      delete data.procedure;
+    }
+    
+    console.log('[ZTProducts] Datos finales para crear:', data);
+    
+    // Validar que tengamos los campos mínimos requeridos
+    if (!data.SKUID || !data.DESSKU || !data.IDUNIDADMEDIDA || !data.REGUSER) {
+      const error = 'Faltan campos requeridos: SKUID, DESSKU, IDUNIDADMEDIDA, REGUSER';
+      console.log('[ZTProducts] ❌', error);
+      return { error: true, message: error };
+    }
+    
+    // Verificar que el SKUID no exista ya
+    const productoExistente = await ZTProduct.findOne({ SKUID: data.SKUID }).lean();
+    if (productoExistente) {
+      console.log('[ZTProducts] ❌ El producto ya existe');
+      return { error: true, message: 'Ya existe un producto con ese SKUID' };
+    }
     
     const nuevoProducto = new ZTProduct({
       ...data,
@@ -48,10 +70,27 @@ async function CreateZTProduct(req) {
     });
     
     const productoGuardado = await nuevoProducto.save();
-    console.log('[ZTProducts] Producto creado exitosamente:', productoGuardado);
-    return productoGuardado;
+    console.log('[ZTProducts] ✅ Producto creado exitosamente');
+    
+    // Retornar objeto limpio para evitar errores de CDS
+    return {
+      success: true,
+      message: 'Producto creado exitosamente',
+      data: {
+        SKUID: productoGuardado.SKUID,
+        DESSKU: productoGuardado.DESSKU,
+        IDUNIDADMEDIDA: productoGuardado.IDUNIDADMEDIDA,
+        REGUSER: productoGuardado.REGUSER,
+        ACTIVED: productoGuardado.ACTIVED,
+        DELETED: productoGuardado.DELETED,
+        CREATED_AT: productoGuardado.CREATED_AT
+      }
+    };
   } catch (error) {
-    console.error('[ZTProducts] Error creando producto:', error.message);
+    console.error('[ZTProducts] ❌ Error creando producto:', error.message);
+    if (error.name === 'ValidationError') {
+      return { error: true, message: error.message };
+    }
     throw error;
   }
 }
