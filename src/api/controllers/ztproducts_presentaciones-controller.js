@@ -6,12 +6,6 @@ class ZTProductsPresentacionesService extends cds.ApplicationService {
     this.on('productsPresentacionesCRUD', (req) => {
       return ZTProductsPresentacionesCRUD(req);
     });
-
-    this.on('presentacionesCRUD', (req) => {
-      return ZTProductsPresentacionesCRUD(req);
-    });
-
-    await super.init();
   }
 }
 

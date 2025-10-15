@@ -12,6 +12,8 @@ entity ZTPRODUCTS_PRESENTACIONES {
       DELETED      : Boolean;
       REGUSER      : String(64);
       REGDATE      : DateTime;
+      MODUSER      : String(64);
+      MODDATE      : DateTime;
       createdAt    : DateTime;
       updatedAt    : DateTime;
 }
