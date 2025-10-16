@@ -1,14 +1,13 @@
 // Importar el modelo mongoose
 const { ZTProduct_FILES } = require('../models/mongodb/ztproducts_files');
-
 // Import de middlewares
 const { OK, FAIL, BITACORA, DATA, AddMSG } = require('../../middlewares/respPWA.handler');
-
 // Handler para POST con archivo en base64 (JSON)
-const { handleUploadZTProductFileCDS } = require('../helpers/azureUpload.helper');
+const { handleUploadZTProductFileCDS, handleUpdateZTProductFileCDS } = require('../helpers/azureUpload.helper');
+
 
 // ============================================
-// HANDLER PARA UPLOAD DE ARCHIVOS
+// HANDLER PARA UPLOAD DE ARCHIVOS -- post
 // ============================================
 async function ZTProductFilesUploadHandler(req) {
   try {
@@ -141,6 +140,54 @@ fileBuffer = Buffer.from(cleanBase64, 'base64');
       message: error.message,
       stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
     };
+  }
+}
+
+
+
+
+// ============================================
+// HANDLER PARA UPDATE DE ARCHIVOS
+// ============================================
+async function ZTProductFilesUpdateHandler(req, fileid) {
+  try {
+    console.log('===== DEBUG UPDATE =====');
+    console.log('req.data:', req.data);
+
+    let payload = null;
+    if (req.data && Object.keys(req.data).length > 0) payload = req.data;
+    else if (req.req?.body && Object.keys(req.req.body).length > 0) payload = req.req.body;
+    else if (req.body && Object.keys(req.body).length > 0) payload = req.body;
+
+    if (!payload) {
+      return { error: true, message: 'No se recibió payload para actualización' };
+    }
+
+    const { fileBase64, originalname, mimetype, ...rest } = payload;
+
+    if (!fileBase64) {
+      return { error: true, message: 'Falta fileBase64 en el payload' };
+    }
+
+    // Limpiar y convertir base64 a buffer
+    const cleanBase64 = fileBase64
+      .replace(/^data:([A-Za-z-+\/]+);base64,/, '')
+      .replace(/\r?\n|\r/g, '');
+    const fileBuffer = Buffer.from(cleanBase64, 'base64');
+
+    // Simular objeto file
+    const file = {
+      buffer: fileBuffer,
+      originalname: originalname || 'update.bin',
+      mimetype: mimetype || 'application/octet-stream'
+    };
+
+    const result = await handleUpdateZTProductFileCDS(fileid, file, rest);
+    return result.data || result;
+
+  } catch (error) {
+    console.error('❌ Error en ZTProductFilesUpdateHandler:', error);
+    return { error: true, message: error.message };
   }
 }
 
@@ -279,7 +326,7 @@ async function ZTProductFilesCRUD(req) {
       
     } else if (procedure === 'put') {
       // PUT - Actualizar archivo
-      res = await UpdateZTProductFile(req, fileid);
+      res = await ZTProductFilesUpdateHandler(req, fileid);
       
     } else if (procedure === 'delete') {
       // DELETE - Eliminar archivo
