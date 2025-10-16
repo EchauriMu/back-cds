@@ -9,4 +9,8 @@ service ZTProductsService @(path:'/api/ztproducts') {
   @Core.Description: 'CRUD de Prodcutos'
   @path: 'ZTProductCRUD'
   action ZTProductCRUD() returns array of Products;
+
+  @Core.Description: 'CRUD de Productos con Bitácora'
+  @path: 'crudProducts'
+  action crudProducts() returns String;
 }
