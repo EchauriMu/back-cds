@@ -20,8 +20,8 @@ module.exports = async (o) =>{
         // const app = express();
 
 
-        //MALR: 🖖🛑 limit json api response
-        app.use(express.json({limit: "500kb"}));
+        //Echauri imit json api para  files 64
+        app.use(express.json({limit: "50mb"}));
 
         app.use(cors());
         app.use(docEnvX.API_URL,router)

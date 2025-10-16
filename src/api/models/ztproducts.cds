@@ -1,3 +1,5 @@
+namespace mongodb;
+
 entity ZTPRODUCTS {
   key SKUID     : String(100);
   DESSKU        : String(255);

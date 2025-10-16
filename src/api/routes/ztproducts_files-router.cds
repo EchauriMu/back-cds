@@ -13,6 +13,7 @@ service ZTProductFilesService @(path:'/api/ztproducts-files') {
     action productsFilesCRUD()
     returns array of Files;
     
+    
     // GET ALL FILES
     // POST /api/ztproducts/files/productsFilesCRUD?procedure=get&type=all
     
