@@ -3,7 +3,7 @@ const { ZTProduct_FILES } = require('../models/mongodb/ztproducts_files');
 // Import de middlewares
 const { OK, FAIL, BITACORA, DATA, AddMSG } = require('../../middlewares/respPWA.handler');
 // Handler para POST con archivo en base64 (JSON)
-const { handleUploadZTProductFileCDS, handleUpdateZTProductFileCDS } = require('../helpers/azureUpload.helper');
+const { handleUploadZTProductFileCDS, handleUpdateZTProductFileCDS } = require('../../helpers/azureUpload.helper');
 
 
 // ============================================

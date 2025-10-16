@@ -2,7 +2,7 @@ const axios = require('axios');
 const fs = require('fs/promises');
 const path = require('path');
 const crypto = require('crypto');
-const { ZTProduct_FILES } = require('../models/mongodb/ztproducts_files');
+const { ZTProduct_FILES } = require('../api/models/mongodb/ztproducts_files');
 
 async function handleUploadZTProductFileCDS(file, body) {
   if (!file) {
