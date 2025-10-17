@@ -11,6 +11,11 @@ service ZTPromocionesService @(path:'/api/ztpromociones') {
   action promocionesCRUD()
   returns array of Promociones;
 
+  @Core.Description: 'CRUD de Promociones con Bitácora'
+  @path: 'crudPromociones'
+  action crudPromociones()
+  returns array of Promociones;
+
   // GET ALL PROMOCIONES
   // POST /api/ztpromociones/promocionesCRUD?procedure=get&type=all
 

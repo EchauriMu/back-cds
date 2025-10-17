@@ -1,55 +1,44 @@
 # 📋 ZTPROMOCIONES - Endpoints para Postman
 
+## 🔧 **Explicación del Servicio Actualizado**
+
+El servicio `ztpromociones-service.js` ha sido actualizado siguiendo el patrón del servicio `ztproducts` con las siguientes características:
+
+### 📊 **Características principales:**
+- **🔍 Bitácora completa:** Registro detallado de todas las operaciones
+- **⚡ Control por ProcessType:** Un solo endpoint CRUD con diferentes tipos de proceso
+- **🛡️ Manejo de errores robusto:** Respuestas consistentes con `OK()` y `FAIL()`
+- **📝 Logging detallado:** Mensajes para usuario y desarrollador
+
+### 🎯 **Endpoints disponibles:**
+1. **Servicio LEGACY:** `promocionesCRUD` (funcionalidad original)
+2. **Servicio NUEVO:** `crudPromociones` (con bitácora y ProcessType)
+
 ---
 
-## 🔍 **1. Obtener todas las promociones**
+## 🆕 **NUEVO SERVICIO CON BITÁCORA - crudPromociones**
+
+### 🔍 **1. Obtener todas las promociones**
 ```http
-POST {{base_url}}/api/ztpromociones/promocionesCRUD?procedure=get&type=all
+POST http://localhost:3033/api/ztpromociones/crudPromociones?ProcessType=GetAll&LoggedUser=Laura
 Content-Type: application/json
 ```
 **Body:** (vacío)
 
 ---
 
-## 🔍 **2. Obtener una promoción específica**
+### 🔍 **2. Obtener una promoción específica**
 ```http
-POST {{base_url}}/api/ztpromociones/promocionesCRUD?procedure=get&type=one&idpromoOK=PROMO123
+POST http://localhost:3033/api/ztpromociones/crudPromociones?ProcessType=GetOne&idPromoOK=PROMO001&LoggedUser=Laura
 Content-Type: application/json
 ```
 **Body:** (vacío)
 
 ---
 
-## 🔍 **3. Obtener promociones por producto**
+### ➕ **3. Crear nueva promoción**
 ```http
-POST {{base_url}}/api/ztpromociones/promocionesCRUD?procedure=get&type=by-product&skuid=SKU123
-Content-Type: application/json
-```
-**Body:** (vacío)
-
----
-
-## 🔍 **4. Obtener promociones por lista de precios**
-```http
-POST {{base_url}}/api/ztpromociones/promocionesCRUD?procedure=get&type=by-lista&idlistaok=LISTA123
-Content-Type: application/json
-```
-**Body:** (vacío)
-
----
-
-## 🔍 **5. Obtener promociones vigentes (activas y dentro del rango de fechas)**
-```http
-POST {{base_url}}/api/ztpromociones/promocionesCRUD?procedure=get&type=vigentes
-Content-Type: application/json
-```
-**Body:** (vacío)
-
----
-
-## ➕ **6. Crear nueva promoción**
-```http
-POST {{base_url}}/api/ztpromociones/promocionesCRUD?procedure=post
+POST http://localhost:3033/api/ztpromociones/crudPromociones?ProcessType=AddOne&LoggedUser=Laura
 Content-Type: application/json
 ```
 **Body:**
@@ -61,10 +50,7 @@ Content-Type: application/json
   "FechaIni": "2024-11-20T00:00:00.000Z",
   "FechaFin": "2024-11-30T23:59:59.000Z",
   "SKUID": "SKU123456",
-  "IdListaOK": null,
   "DescuentoPorcentaje": 25.5,
-  "ACTIVED": true,
-  "DELETED": false,
   "REGUSER": "admin@empresa.com"
 }
 ```
@@ -75,13 +61,12 @@ Content-Type: application/json
 - `FechaIni`: Fecha inicio (ISO 8601)
 - `FechaFin`: Fecha fin (ISO 8601)
 - `REGUSER`: Usuario que registra
-- Al menos uno: `SKUID` o `IdListaOK`
 
 ---
 
-## ✏️ **7. Actualizar promoción existente**
+### ✏️ **4. Actualizar promoción existente**
 ```http
-POST {{base_url}}/api/ztpromociones/promocionesCRUD?procedure=put&idpromoOK=PROMO2024001
+POST http://localhost:3033/api/ztpromociones/crudPromociones?ProcessType=UpdateOne&idPromoOK=PROMO2024001&LoggedUser=Laura
 Content-Type: application/json
 ```
 **Body:**
@@ -90,16 +75,15 @@ Content-Type: application/json
   "Titulo": "Descuento Black Friday EXTENDIDO",
   "Descripcion": "Promoción extendida hasta diciembre",
   "FechaFin": "2024-12-05T23:59:59.000Z",
-  "DescuentoPorcentaje": 30.0,
-  "MODUSER": "admin@empresa.com"
+  "DescuentoPorcentaje": 30.0
 }
 ```
 
 ---
 
-## 🗑️ **8. Borrado lógico (soft delete)**
+### 🗑️ **5. Borrado lógico (soft delete)**
 ```http
-POST {{base_url}}/api/ztpromociones/promocionesCRUD?procedure=delete&type=logic&idpromoOK=PROMO2024001
+POST http://localhost:3033/api/ztpromociones/crudPromociones?ProcessType=DeleteOne&idPromoOK=PROMO2024001&LoggedUser=Laura
 Content-Type: application/json
 ```
 **Body:** (vacío)
@@ -108,39 +92,128 @@ Content-Type: application/json
 
 ---
 
-## 🗑️ **9. Borrado físico (hard delete)**
+## � **Respuesta del Nuevo Servicio con Bitácora:**
+
+### ✅ **Respuesta exitosa:**
+```json
+{
+  "success": true,
+  "process": "Obtener todas las PROMOCIONES",
+  "processType": "GetAll",
+  "loggedUser": "Laura",
+  "status": 200,
+  "method": "GET",
+  "api": "/crud?ProcessType=GetAll",
+  "messageUSR": "Se obtuvieron 5 promociones correctamente",
+  "messageDEV": "Query ejecutada exitosamente. Promociones encontradas: 5",
+  "dataRes": [...], // Array de promociones
+  "principal": true,
+  "timestamp": "2024-10-16T10:30:00.000Z"
+}
+```
+
+### ❌ **Respuesta de error:**
+```json
+{
+  "success": false,
+  "process": "Agregar UNA PROMOCION",
+  "processType": "AddOne",
+  "loggedUser": "Laura",
+  "status": 400,
+  "method": "POST",
+  "api": "/crud?ProcessType=AddOne",
+  "messageUSR": "ID de promoción requerido",
+  "messageDEV": "IdPromoOK es requerido para crear una promoción",
+  "dataRes": null,
+  "principal": true,
+  "timestamp": "2024-10-16T10:30:00.000Z"
+}
+```
+
+---
+
+## 📋 **SERVICIO LEGACY - promocionesCRUD**
+
+### 🔍 **1. Obtener todas las promociones (Legacy)**
 ```http
-POST {{base_url}}/api/ztpromociones/promocionesCRUD?procedure=delete&type=hard&idpromoOK=PROMO2024001
+POST http://localhost:3033/api/ztpromociones/promocionesCRUD?procedure=get&type=all
 Content-Type: application/json
 ```
 **Body:** (vacío)
 
-**⚠️ CUIDADO:** Elimina permanentemente el registro de la base de datos
-
 ---
 
-## 🔄 **10. Activar promoción**
+### 🔍 **2. Obtener una promoción específica (Legacy)**
 ```http
-POST {{base_url}}/api/ztpromociones/promocionesCRUD?procedure=activate&idpromoOK=PROMO2024001
+POST http://localhost:3033/api/ztpromociones/promocionesCRUD?procedure=get&type=one&idPromoOK=PROMO123
 Content-Type: application/json
 ```
 **Body:** (vacío)
 
-**Resultado:** Marca `ACTIVED: true` y `DELETED: false`
+---
+
+### ➕ **3. Crear nueva promoción (Legacy)**
+```http
+POST http://localhost:3033/api/ztpromociones/promocionesCRUD?procedure=post
+Content-Type: application/json
+```
+**Body:**
+```json
+{
+  "IdPromoOK": "PROMO2024001",
+  "Titulo": "Descuento Black Friday",
+  "Descripcion": "Descuento especial por Black Friday en productos seleccionados",
+  "FechaIni": "2024-11-20T00:00:00.000Z",
+  "FechaFin": "2024-11-30T23:59:59.000Z",
+  "SKUID": "SKU123456",
+  "DescuentoPorcentaje": 25.5,
+  "REGUSER": "Laura"
+}
+```
 
 ---
 
-## 📝 **Variables de Postman**
-
-Crear una variable de entorno:
-- **Variable:** `base_url`
-- **Valor:** `http://localhost:4004` (o tu servidor)
+### ✏️ **4. Actualizar promoción existente (Legacy)**
+```http
+POST http://localhost:3033/api/ztpromociones/promocionesCRUD?procedure=put&idPromoOK=PROMO2024001
+Content-Type: application/json
+```
+**Body:**
+```json
+{
+  "Titulo": "Descuento Black Friday EXTENDIDO",
+  "Descripcion": "Promoción extendida hasta diciembre",
+  "FechaFin": "2024-12-05T23:59:59.000Z",
+  "DescuentoPorcentaje": 30.0
+}
+```
 
 ---
 
-## 📊 **Ejemplos de respuesta exitosa:**
+### 🗑️ **5. Borrado lógico (Legacy)**
+```http
+POST http://localhost:3033/api/ztpromociones/promocionesCRUD?procedure=delete&type=logic&idPromoOK=PROMO2024001
+Content-Type: application/json
+```
+**Body:** (vacío)
 
-### GET (todas las promociones):
+---
+
+## 🎯 **Diferencias entre los Servicios:**
+
+| Característica | **crudPromociones (NUEVO)** | **promocionesCRUD (LEGACY)** |
+|---|---|---|
+| **Bitácora** | ✅ Completa con logs detallados | ❌ Sin bitácora |
+| **ProcessType** | ✅ GetAll, GetOne, AddOne, UpdateOne, DeleteOne | ❌ procedure + type |
+| **Manejo de errores** | ✅ OK() y FAIL() consistentes | ⚠️ Respuestas simples |
+| **Logging** | ✅ Mensajes USR y DEV | ⚠️ Console.log básico |
+| **Validaciones** | ✅ Robustas con mensajes claros | ⚠️ Básicas |
+
+---
+
+## 📊 **Ejemplos de respuesta Legacy (promocionesCRUD):**
+
+### GET exitoso:
 ```json
 [
   {
@@ -151,19 +224,16 @@ Crear una variable de entorno:
     "FechaIni": "2024-11-20T00:00:00.000Z",
     "FechaFin": "2024-11-30T23:59:59.000Z",
     "SKUID": "SKU123456",
-    "IdListaOK": null,
     "DescuentoPorcentaje": 25.5,
     "ACTIVED": true,
     "DELETED": false,
-    "REGUSER": "admin@empresa.com",
-    "REGDATE": "2024-10-14T10:30:00.000Z",
-    "createdAt": "2024-10-14T10:30:00.000Z",
-    "updatedAt": "2024-10-14T10:30:00.000Z"
+    "REGUSER": "Laura",
+    "REGDATE": "2024-10-14T10:30:00.000Z"
   }
 ]
 ```
 
-### Error:
+### Error Legacy:
 ```json
 {
   "error": true,
@@ -175,8 +245,20 @@ Crear una variable de entorno:
 
 ## 🚀 **Tips para testing:**
 
+### **🆕 Para el NUEVO servicio (crudPromociones):**
+1. **Siempre incluir `LoggedUser`** en query params
+2. **Usar ProcessType correcto** (GetAll, GetOne, AddOne, UpdateOne, DeleteOne)
+3. **Revisar bitácora completa** en respuestas
+4. **Aprovechar mensajes detallados** para debugging
+
+### **📋 Para el servicio LEGACY (promocionesCRUD):**
+1. **Usar procedure + type** tradicional
+2. **Respuestas más simples** sin bitácora
+3. **Compatible con código existente**
+
+### **🔧 Generales:**
 1. **Usar fechas futuras** para promociones vigentes
 2. **Validar rangos de descuento** (0-100%)
-3. **Probar con productos/listas existentes**
-4. **Testear validaciones** (fechas, campos obligatorios)
-5. **Verificar soft delete** antes del hard delete
+3. **Testear validaciones** (fechas, campos obligatorios)
+4. **Verificar soft delete** antes del hard delete
+5. **Puerto configurado:** `localhost:3033`
