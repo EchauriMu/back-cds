@@ -31,10 +31,6 @@ const ZTPRODUCTS_FILES = new mongoose.Schema(
       type: Boolean,
       default: false,
     },
-    SECUENCE: {
-      type: Number,
-      default: 0,
-    },
     INFOAD: {
       type: String,
       default: "",

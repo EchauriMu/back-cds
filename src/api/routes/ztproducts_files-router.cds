@@ -10,8 +10,22 @@ service ZTProductFilesService @(path:'/api/ztproducts-files') {
     // CRUD de Archivos de Productos
     @Core.Description: 'CRUD de Archivos de Productos'
     @path: 'productsFilesCRUD'
-    action productsFilesCRUD()
-    returns array of Files;
+    action productsFilesCRUD(
+        ProcessType: String,
+        fileBase64: String,
+        SKUID: String,
+        FILETYPE: String,
+        REGUSER: String,
+        originalname: String,
+        mimetype: String,
+        INFOAD: String,
+        PRINCIPAL: Boolean,
+        SECUENCE: Integer,
+        IdPresentaOK: String,
+        FILE: String,
+        ACTIVED: Boolean,
+        DELETED: Boolean
+    ) returns array of Files;
     
     
     // GET ALL FILES

@@ -1,200 +1,114 @@
-// Importar el modelo mongoose
+// ============================================
+// MÉTODO GETALL CON BITACORA
+// ============================================
+async function GetAllZTProductFilesMethod(bitacora, params, paramString, body) {
+  let data = DATA();
+  try {
+    const files = await GetAllZTProductFiles();
+    data.dataRes = files;
+    data.messageUSR = 'Archivos obtenidos correctamente';
+    data.messageDEV = 'GetAllZTProductFiles ejecutado sin errores';
+    data.api = '/api/ztproducts-files/productsFilesCRUD';
+    bitacora = AddMSG(bitacora, data, 'OK', 200, true);
+    bitacora.success = true;
+    return bitacora;
+  } catch (error) {
+    data.messageUSR = 'Error al obtener los archivos';
+    data.messageDEV = error.message;
+    bitacora = AddMSG(bitacora, data, 'FAIL');
+    bitacora.success = false;
+    return bitacora;
+  }
+}
+//// ============================================
+//// IMPORTS
+//// ============================================
 const { ZTProduct_FILES } = require('../models/mongodb/ztproducts_files');
-// Import de middlewares
 const { OK, FAIL, BITACORA, DATA, AddMSG } = require('../../middlewares/respPWA.handler');
-// Handler para POST con archivo en base64 (JSON)
 const { handleUploadZTProductFileCDS, handleUpdateZTProductFileCDS } = require('../../helpers/azureUpload.helper');
 
+//// ============================================
+//// UTIL: OBTENER PAYLOAD DESDE CDS/EXPRESS
+//// ============================================
+function getPayload(req) {
+  return req.data || null;
+}
 
-// ============================================
-// HANDLER PARA UPLOAD DE ARCHIVOS -- post
-// ============================================
+
+
+//// ============================================
+//// HANDLER: UPLOAD DE ARCHIVOS (POST)
+//// ============================================
 async function ZTProductFilesUploadHandler(req) {
   try {
-    // Debug completo
-    console.log('===== DEBUG COMPLETO =====');
-    console.log('req.data:', req.data);
-    console.log('req.req?.body:', req.req?.body);
-    console.log('req.body:', req.body);
-    console.log('req.req?.query:', req.req?.query);
-    console.log('typeof req.data:', typeof req.data);
-    console.log('typeof req.req?.body:', typeof req.req?.body);
-
-    // SOLUCIÓN: En CAP/CDS, intentar múltiples fuentes
-    let payload = null;
-    
-    // 1. Primero intentar req.data (formato CAP estándar)
-    if (req.data && Object.keys(req.data).length > 0) {
-      payload = req.data;
-      console.log('✓ Datos encontrados en req.data');
-    }
-    // 2. Luego intentar req.req.body (Express body-parser)
-    else if (req.req?.body && Object.keys(req.req.body).length > 0) {
-      payload = req.req.body;
-      console.log('✓ Datos encontrados en req.req.body');
-    }
-    // 3. Finalmente req.body directo
-    else if (req.body && Object.keys(req.body).length > 0) {
-      payload = req.body;
-      console.log('✓ Datos encontrados en req.body');
-    }
-
+    const payload = getPayload(req);
     if (!payload) {
-      console.error('✗ No se encontraron datos en ninguna fuente');
-      return { 
-        error: true, 
-        message: 'No se recibió payload. Verifica que el Content-Type sea application/json',
-        debug: {
-          hasReqData: !!(req.data && Object.keys(req.data).length > 0),
-          hasReqReqBody: !!(req.req?.body && Object.keys(req.req.body).length > 0),
-          hasReqBody: !!(req.body && Object.keys(req.body).length > 0),
-          reqDataKeys: req.data ? Object.keys(req.data) : [],
-          reqReqBodyKeys: req.req?.body ? Object.keys(req.req.body) : []
-        }
-      };
+      return { error: true, message: 'No se recibió payload. Verifica Content-Type: application/json' };
     }
 
-    console.log('✓ Payload encontrado:', Object.keys(payload));
+    const { fileBase64, SKUID, FILETYPE, REGUSER, originalname, mimetype, ...rest } = payload;
 
-    const { 
-      fileBase64, 
-      SKUID, 
-      FILETYPE, 
-      REGUSER, 
-      originalname, 
-      mimetype, 
-      ...rest 
-    } = payload;
-
-    // Validar campos requeridos
+    //// Validación de campos requeridos
     if (!fileBase64 || !SKUID || !FILETYPE || !REGUSER) {
-      console.error('[ZTProductFilesUploadHandler] Faltan campos requeridos:', { 
-        fileBase64: fileBase64 ? '✓ presente' : '✗ falta',
-        SKUID: SKUID || '✗ falta',
-        FILETYPE: FILETYPE || '✗ falta',
-        REGUSER: REGUSER || '✗ falta'
-      });
-      return { 
-        error: true, 
-        message: 'Faltan campos requeridos: fileBase64, SKUID, FILETYPE, REGUSER',
-        received: {
-          fileBase64: !!fileBase64,
-          SKUID: SKUID || null,
-          FILETYPE: FILETYPE || null,
-          REGUSER: REGUSER || null
-        }
-      };
+      return { error: true, message: 'Faltan campos requeridos: fileBase64, SKUID, FILETYPE, REGUSER' };
     }
 
-    // Convertir base64 a buffer
+    //// Convertir Base64 a Buffer
     let fileBuffer;
     try {
-      // Limpiar el base64 si viene con el prefijo data:image/...
- // Limpiar Base64: eliminar prefijo y saltos de línea
-const cleanBase64 = fileBase64
-  .replace(/^data:([A-Za-z-+\/]+);base64,/, '') // eliminar prefijo data:...
-  .replace(/\r?\n|\r/g, ''); // eliminar saltos de línea
-
-// Convertir a buffer
-fileBuffer = Buffer.from(cleanBase64, 'base64');
-
-  console.log(`✓ Buffer creado: ${fileBuffer.length} bytes`);
+      const cleanBase64 = fileBase64.replace(/^data:([A-Za-z-+\/]+);base64,/, '').replace(/\r?\n|\r/g, '');
+      fileBuffer = Buffer.from(cleanBase64, 'base64');
     } catch (err) {
-      console.error('[ZTProductFilesUploadHandler] Error al convertir base64:', err);
-      return { 
-        error: true, 
-        message: 'Archivo base64 inválido. Verifica que el string esté correctamente codificado.',
-        details: err.message
-      };
+      return { error: true, message: 'Archivo base64 inválido', details: err.message };
     }
 
-    // Simular objeto file compatible con el helper
+    //// Preparar objeto file para helper
     const file = {
       buffer: fileBuffer,
       originalname: originalname || 'upload.bin',
       mimetype: mimetype || 'application/octet-stream',
     };
 
-    console.log('[ZTProductFilesUploadHandler] File object creado:', {
-      originalname: file.originalname,
-      mimetype: file.mimetype,
-      size: file.buffer.length
-    });
-
-    // Llamar helper para subir a Azure
-    const result = await handleUploadZTProductFileCDS(file, { 
-      SKUID, 
-      FILETYPE, 
-      REGUSER, 
-      ...rest 
-    });
-
-    console.log('[ZTProductFilesUploadHandler] ✓ Resultado helper:', result);
-
+    //// Subir archivo usando helper de Azure
+    const result = await handleUploadZTProductFileCDS(file, { SKUID, FILETYPE, REGUSER, ...rest });
     return result.data || result;
 
   } catch (error) {
-    console.error('❌ Error en ZTProductFilesUploadHandler:', error);
-    return { 
-      error: true, 
-      message: error.message,
-      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
-    };
+    return { error: true, message: error.message, stack: process.env.NODE_ENV === 'development' ? error.stack : undefined };
   }
 }
 
-
-
-
-// ============================================
-// HANDLER PARA UPDATE DE ARCHIVOS
-// ============================================
+//// ============================================
+//// HANDLER: UPDATE DE ARCHIVOS (PUT)
+//// ============================================
 async function ZTProductFilesUpdateHandler(req, fileid) {
   try {
-    console.log('===== DEBUG UPDATE =====');
-    console.log('req.data:', req.data);
-
-    let payload = null;
-    if (req.data && Object.keys(req.data).length > 0) payload = req.data;
-    else if (req.req?.body && Object.keys(req.req.body).length > 0) payload = req.req.body;
-    else if (req.body && Object.keys(req.body).length > 0) payload = req.body;
-
-    if (!payload) {
-      return { error: true, message: 'No se recibió payload para actualización' };
-    }
+    const payload = getPayload(req);
+    if (!payload) return { error: true, message: 'No se recibió payload para actualización' };
 
     const { fileBase64, originalname, mimetype, ...rest } = payload;
+    if (!fileBase64) return { error: true, message: 'Falta fileBase64 en el payload' };
 
-    if (!fileBase64) {
-      return { error: true, message: 'Falta fileBase64 en el payload' };
-    }
-
-    // Limpiar y convertir base64 a buffer
-    const cleanBase64 = fileBase64
-      .replace(/^data:([A-Za-z-+\/]+);base64,/, '')
-      .replace(/\r?\n|\r/g, '');
+    const cleanBase64 = fileBase64.replace(/^data:([A-Za-z-+\/]+);base64,/, '').replace(/\r?\n|\r/g, '');
     const fileBuffer = Buffer.from(cleanBase64, 'base64');
 
-    // Simular objeto file
     const file = {
       buffer: fileBuffer,
       originalname: originalname || 'update.bin',
-      mimetype: mimetype || 'application/octet-stream'
+      mimetype: mimetype || 'application/octet-stream',
     };
 
     const result = await handleUpdateZTProductFileCDS(fileid, file, rest);
     return result.data || result;
 
   } catch (error) {
-    console.error('❌ Error en ZTProductFilesUpdateHandler:', error);
     return { error: true, message: error.message };
   }
 }
 
-// ============================================
-// FUNCIONES CRUD BÁSICAS
-// ============================================
-
+//// ============================================
+//// CRUD BÁSICO: GET
+//// ============================================
 async function GetAllZTProductFiles() {
   return await ZTProduct_FILES.find().lean();
 }
@@ -206,167 +120,296 @@ async function GetOneZTProductFile(fileid) {
   return file;
 }
 
-async function CreateZTProductFile(req) {
-  const data = req.req.body;
-  if (!data.FILEID || !data.SKUID || !data.FILETYPE || !data.FILE || !data.REGUSER) {
-    throw new Error('Faltan campos obligatorios: FILEID, SKUID, FILETYPE, FILE, REGUSER');
-  }
-  
-  const existe = await ZTProduct_FILES.findOne({ FILEID: data.FILEID });
-  if (existe) throw new Error('Ya existe un archivo con ese FILEID');
-  
-  const nuevo = await ZTProduct_FILES.create(data);
-  return nuevo.toObject();
-}
-
-async function UpdateZTProductFile(req, fileid) {
-  if (!fileid) throw new Error('Falta parámetro FILEID');
-  const cambios = req.req.body;
-  if (!cambios || Object.keys(cambios).length === 0) {
-    throw new Error('No se enviaron datos para actualizar');
-  }
-  
-  const actualizado = await ZTProduct_FILES.findOneAndUpdate(
-    { FILEID: fileid },
-    { $set: cambios },
-    { new: true }
-  );
-  
-  if (!actualizado) throw new Error('No se encontró el archivo para actualizar');
-  return actualizado.toObject();
-}
-
+//// ============================================
+//// CRUD BÁSICO: DELETE / ACTIVATE
+//// ============================================
 async function DeleteZTProductFileLogic(fileid) {
   if (!fileid) throw new Error('Falta parámetro FILEID');
-  
   const actualizado = await ZTProduct_FILES.findOneAndUpdate(
     { FILEID: fileid },
     { $set: { ACTIVED: false, DELETED: true } },
     { new: true }
   );
-  
   if (!actualizado) throw new Error('No se encontró el archivo para borrar');
   return actualizado.toObject();
 }
 
 async function DeleteZTProductFileHard(fileid) {
   if (!fileid) throw new Error('Falta parámetro FILEID');
-  
   const eliminado = await ZTProduct_FILES.findOneAndDelete({ FILEID: fileid });
   if (!eliminado) throw new Error('No se encontró el archivo para eliminar');
-  
   return { mensaje: 'Archivo eliminado permanentemente', FILEID: fileid };
 }
 
 async function ActivateZTProductFile(fileid) {
   if (!fileid) throw new Error('Falta parámetro FILEID');
-  
   const actualizado = await ZTProduct_FILES.findOneAndUpdate(
     { FILEID: fileid },
     { $set: { ACTIVED: true, DELETED: false } },
     { new: true }
   );
-  
   if (!actualizado) throw new Error('No se encontró el archivo para activar');
   return actualizado.toObject();
 }
-
-// ============================================
-// FUNCIÓN PRINCIPAL CRUD
-// ============================================
+//// ============================================
+//// FUNCION PRINCIPAL CRUD
+//// ============================================
 async function ZTProductFilesCRUD(req) {
-  let res;
+  let bitacora = BITACORA();
+  let data = DATA();
   try {
-    const { procedure, type, fileid, LoggedUser } = req.req?.query || {};
-    
-    console.log('=== ZTProductFilesCRUD ===');
-    console.log('Procedure:', procedure);
-    console.log('Type:', type);
-    console.log('FileID:', fileid);
+    const params = req.req?.query || {};
+    const body = req.req?.body;
+    const { ProcessType, LoggedUser, DBServer, type, fileid } = params;
+    bitacora.processType = ProcessType || 'No especificado';
+    bitacora.loggedUser = LoggedUser || 'No especificado';
+    bitacora.dbServer = DBServer || process.env.CONNECTION_TO_HANA || 'No especificado';
 
-    if (procedure === 'post') {
-      // POST - Upload de archivo
-      res = await ZTProductFilesUploadHandler(req);
-      
-    } else if (procedure === 'get') {
-      // GET - Obtener archivos
-      if (type === 'all') {
-        // Si es request OData directo, retornar solo los datos
-        if (req && req._.odataReq) {
-          res = await GetAllZTProductFiles();
-        } else {
-          // Respuesta con bitácora/metadatos
-          let bitacora = BITACORA();
-          let data = DATA();
-          bitacora.loggedUser = LoggedUser || 'DEFAULT_USER';
-          bitacora.process = 'GETall ZTProductFiles';
-          
-          try {
-            const files = await GetAllZTProductFiles();
-            data.dataRes = files;
-            data.messageUSR = 'Archivos obtenidos correctamente';
-            data.messageDEV = 'GetAllZTProductFiles ejecutado sin errores';
-            data.api = '/api/ztproducts-files/productsFilesCRUD';
-            bitacora = AddMSG(bitacora, data, 'OK', 200, true);
-            res = OK(bitacora);
-          } catch (error) {
-            data.messageUSR = 'Error al obtener los archivos';
-            data.messageDEV = error.message;
-            bitacora = AddMSG(bitacora, data, 'FAIL');
-            console.error('<<Message USR>>', bitacora.messageUSR);
-            console.error('<<Message DEV>>', bitacora.messageDEV);
-            res = FAIL(bitacora);
-          }
-        }
-      } else if (type === 'one') {
-        res = await GetOneZTProductFile(fileid);
-      } else {
-        throw new Error('Coloca un tipo de búsqueda válido (all o one)');
-      }
-      
-    } else if (procedure === 'put') {
-      // PUT - Actualizar archivo
-      res = await ZTProductFilesUpdateHandler(req, fileid);
-      
-    } else if (procedure === 'delete') {
-      // DELETE - Eliminar archivo
-      if (type === 'logic') {
-        res = await DeleteZTProductFileLogic(fileid);
-      } else if (type === 'hard') {
-        res = await DeleteZTProductFileHard(fileid);
-      } else {
-        throw new Error('Tipo de borrado inválido (logic o hard)');
-      }
-      
-    } else if (procedure === 'activate') {
-      // ACTIVATE - Reactivar archivo
-      res = await ActivateZTProductFile(fileid);
-      
-    } else {
-      throw new Error('Parámetros inválidos o incompletos. Usa: procedure=get|post|put|delete|activate');
+    let paramString = params ? new URLSearchParams(params).toString().trim() : '';
+
+    switch (ProcessType) {
+      case 'GetAll':
+        bitacora = await GetAllMethod(bitacora, params, paramString, body);
+        break;
+      case 'GetOne':
+        bitacora = await GetOneMethod(bitacora, params, fileid);
+        break;
+      case 'AddOne':
+        bitacora = await AddOneMethod(bitacora, params, body, req);
+        break;
+      case 'UpdateOne':
+        bitacora = await UpdateOneMethod(bitacora, params, fileid, req);
+        break;
+      case 'DeleteLogic':
+        bitacora = await DeleteLogicMethod(bitacora, params, fileid);
+        break;
+      case 'DeleteHard':
+        bitacora = await DeleteHardMethod(bitacora, params, fileid);
+        break;
+      case 'ActivateOne':
+        bitacora = await ActivateOneMethod(bitacora, params, fileid);
+        break;
+      default:
+        data.process = 'Validación de ProcessType';
+        data.messageUSR = 'ProcessType inválido o no especificado';
+        data.messageDEV = 'ProcessType debe ser uno de: GetAll, GetOne, AddOne, UpdateOne, DeleteLogic, DeleteHard, ActivateOne';
+        bitacora = AddMSG(bitacora, data, 'FAIL', 400, true);
+        return FAIL(bitacora);
     }
-
-    return res;
-
+    return OK(bitacora);
   } catch (error) {
-    console.error('❌ Error en ZTProductFilesCRUD:', error);
-    return { 
-      error: true, 
-      message: error.message,
-      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
-    };
+    data.process = 'Catch principal ZTProductFilesCRUD';
+    data.messageUSR = 'Ocurrió un error inesperado en el endpoint';
+    data.messageDEV = error.message;
+    bitacora = AddMSG(bitacora, data, 'FAIL', 500, true);
+    return FAIL(bitacora);
   }
 }
 
-// ============================================
-// EXPORTS
-// ============================================
+// Métodos CRUD modulares con bitácora
+
+async function GetAllMethod(bitacora, params, paramString, body) {
+  let data = DATA();
+  // Propagar todos los datos relevantes
+  data.process = 'Obtener todos los archivos';
+  data.processType = params.ProcessType || '';
+  data.loggedUser = params.LoggedUser || '';
+  data.dbServer = params.DBServer || process.env.CONNECTION_TO_HANA || '';
+  data.server = process.env.SERVER_NAME || '';
+  try {
+    const files = await GetAllZTProductFiles();
+    data.dataRes = files;
+    data.messageUSR = 'Archivos obtenidos correctamente';
+    data.messageDEV = 'GetAllZTProductFiles ejecutado sin errores';
+    data.api = '/api/ztproducts-files/productsFilesCRUD';
+    // Propagar también en la bitácora
+    bitacora.processType = params.ProcessType || '';
+    bitacora.loggedUser = params.LoggedUser || '';
+    bitacora.dbServer = params.DBServer || process.env.CONNECTION_TO_HANA || '';
+    bitacora.server = process.env.SERVER_NAME || '';
+    bitacora.process = 'Obtener todos los archivos';
+    bitacora = AddMSG(bitacora, data, 'OK', 200, true);
+    return bitacora;
+  } catch (error) {
+    data.messageUSR = 'Error al obtener los archivos';
+    data.messageDEV = error.message;
+    bitacora.processType = params.ProcessType || '';
+    bitacora.loggedUser = params.LoggedUser || '';
+    bitacora.dbServer = params.DBServer || process.env.CONNECTION_TO_HANA || '';
+    bitacora.server = process.env.SERVER_NAME || '';
+    bitacora.process = 'Obtener todos los archivos';
+    bitacora = AddMSG(bitacora, data, 'FAIL', 500, true);
+    return bitacora;
+  }
+}
+
+async function GetOneMethod(bitacora, params, fileid) {
+  let data = DATA();
+  data.process = 'Obtener un archivo';
+  try {
+    const file = await GetOneZTProductFile(fileid);
+    data.dataRes = file;
+    data.messageUSR = 'Archivo obtenido correctamente';
+    data.messageDEV = 'GetOneZTProductFile ejecutado sin errores';
+    data.api = '/api/ztproducts-files/productsFilesCRUD';
+    bitacora = AddMSG(bitacora, data, 'OK', 200, true);
+    return bitacora;
+  } catch (error) {
+    data.messageUSR = 'Error al obtener el archivo';
+    data.messageDEV = error.message;
+    bitacora = AddMSG(bitacora, data, 'FAIL', 500, true);
+    return bitacora;
+  }
+}
+
+async function AddOneMethod(bitacora, params, body, req) {
+  let data = DATA();
+  data.process = 'Agregar archivo';
+  data.processType = params.ProcessType || '';
+  data.loggedUser = params.LoggedUser || '';
+  data.dbServer = params.DBServer || process.env.CONNECTION_TO_HANA || '';
+  data.server = process.env.SERVER_NAME || '';
+  // Propagar también en la bitácora
+  bitacora.processType = params.ProcessType || '';
+  bitacora.loggedUser = params.LoggedUser || '';
+  bitacora.dbServer = params.DBServer || process.env.CONNECTION_TO_HANA || '';
+  bitacora.server = process.env.SERVER_NAME || '';
+  bitacora.process = 'Agregar archivo';
+  try {
+    const result = await ZTProductFilesUploadHandle(req);
+    data.dataRes = result;
+    data.messageUSR = 'Archivo subido correctamente';
+    data.messageDEV = 'Upload ejecutado sin errores';
+    data.api = '/api/ztproducts-files/productsFilesCRUD';
+    bitacora = AddMSG(bitacora, data, 'OK', 201, true);
+    return bitacora;
+  } catch (error) {
+    data.messageUSR = 'Error al subir el archivo';
+    data.messageDEV = error.message;
+    bitacora = AddMSG(bitacora, data, 'FAIL', 500, true);
+    return bitacora;
+  }
+}
+
+async function UpdateOneMethod(bitacora, params, fileid, req) {
+  let data = DATA();
+  data.process = 'Actualizar archivo';
+  data.processType = params.ProcessType || '';
+  data.loggedUser = params.LoggedUser || '';
+  data.dbServer = params.DBServer || process.env.CONNECTION_TO_HANA || '';
+  data.server = process.env.SERVER_NAME || '';
+  bitacora.processType = params.ProcessType || '';
+  bitacora.loggedUser = params.LoggedUser || '';
+  bitacora.dbServer = params.DBServer || process.env.CONNECTION_TO_HANA || '';
+  bitacora.server = process.env.SERVER_NAME || '';
+  bitacora.process = 'Actualizar archivo';
+  try {
+    const result = await ZTProductFilesUpdateHandler(req, fileid);
+    data.dataRes = result;
+    data.messageUSR = 'Archivo actualizado correctamente';
+    data.messageDEV = 'Update ejecutado sin errores';
+    data.api = '/api/ztproducts-files/productsFilesCRUD';
+    bitacora = AddMSG(bitacora, data, 'OK', 200, true);
+    return bitacora;
+  } catch (error) {
+    data.messageUSR = 'Error al actualizar el archivo';
+    data.messageDEV = error.message;
+    bitacora = AddMSG(bitacora, data, 'FAIL', 500, true);
+    return bitacora;
+  }
+}
+
+async function DeleteLogicMethod(bitacora, params, fileid) {
+  let data = DATA();
+  data.process = 'Borrado lógico de archivo';
+  data.processType = params.ProcessType || '';
+  data.loggedUser = params.LoggedUser || '';
+  data.dbServer = params.DBServer || process.env.CONNECTION_TO_HANA || '';
+  data.server = process.env.SERVER_NAME || '';
+  bitacora.processType = params.ProcessType || '';
+  bitacora.loggedUser = params.LoggedUser || '';
+  bitacora.dbServer = params.DBServer || process.env.CONNECTION_TO_HANA || '';
+  bitacora.server = process.env.SERVER_NAME || '';
+  bitacora.process = 'Borrado lógico de archivo';
+  try {
+    const result = await DeleteZTProductFileLogic(fileid);
+    data.dataRes = result;
+    data.messageUSR = 'Archivo borrado lógicamente';
+    data.messageDEV = 'DeleteLogic ejecutado sin errores';
+    data.api = '/api/ztproducts-files/productsFilesCRUD';
+    bitacora = AddMSG(bitacora, data, 'OK', 200, true);
+    return bitacora;
+  } catch (error) {
+    data.messageUSR = 'Error al borrar lógicamente el archivo';
+    data.messageDEV = error.message;
+    bitacora = AddMSG(bitacora, data, 'FAIL', 500, true);
+    return bitacora;
+  }
+}
+
+async function DeleteHardMethod(bitacora, params, fileid) {
+  let data = DATA();
+  data.process = 'Borrado permanente de archivo';
+  data.processType = params.ProcessType || '';
+  data.loggedUser = params.LoggedUser || '';
+  data.dbServer = params.DBServer || process.env.CONNECTION_TO_HANA || '';
+  data.server = process.env.SERVER_NAME || '';
+  bitacora.processType = params.ProcessType || '';
+  bitacora.loggedUser = params.LoggedUser || '';
+  bitacora.dbServer = params.DBServer || process.env.CONNECTION_TO_HANA || '';
+  bitacora.server = process.env.SERVER_NAME || '';
+  bitacora.process = 'Borrado permanente de archivo';
+  try {
+    const result = await DeleteZTProductFileHard(fileid);
+    data.dataRes = result;
+    data.messageUSR = 'Archivo borrado permanentemente';
+    data.messageDEV = 'DeleteHard ejecutado sin errores';
+    data.api = '/api/ztproducts-files/productsFilesCRUD';
+    bitacora = AddMSG(bitacora, data, 'OK', 200, true);
+    return bitacora;
+  } catch (error) {
+    data.messageUSR = 'Error al borrar permanentemente el archivo';
+    data.messageDEV = error.message;
+    bitacora = AddMSG(bitacora, data, 'FAIL', 500, true);
+    return bitacora;
+  }
+}
+
+async function ActivateOneMethod(bitacora, params, fileid) {
+  let data = DATA();
+  data.process = 'Activar archivo';
+  data.processType = params.ProcessType || '';
+  data.loggedUser = params.LoggedUser || '';
+  data.dbServer = params.DBServer || process.env.CONNECTION_TO_HANA || '';
+  data.server = process.env.SERVER_NAME || '';
+  bitacora.processType = params.ProcessType || '';
+  bitacora.loggedUser = params.LoggedUser || '';
+  bitacora.dbServer = params.DBServer || process.env.CONNECTION_TO_HANA || '';
+  bitacora.server = process.env.SERVER_NAME || '';
+  bitacora.process = 'Activar archivo';
+  try {
+    const result = await ActivateZTProductFile(fileid);
+    data.dataRes = result;
+    data.messageUSR = 'Archivo activado correctamente';
+    data.messageDEV = 'Activate ejecutado sin errores';
+    data.api = '/api/ztproducts-files/productsFilesCRUD';
+    bitacora = AddMSG(bitacora, data, 'OK', 200, true);
+    return bitacora;
+  } catch (error) {
+    data.messageUSR = 'Error al activar el archivo';
+    data.messageDEV = error.message;
+    bitacora = AddMSG(bitacora, data, 'FAIL', 500, true);
+    return bitacora;
+  }
+}
+
+//// ============================================
+//// EXPORTS
+//// ============================================
 module.exports = {
   ZTProductFilesCRUD,
   GetAllZTProductFiles,
   GetOneZTProductFile,
-  CreateZTProductFile,
-  UpdateZTProductFile,
   DeleteZTProductFileLogic,
   DeleteZTProductFileHard,
   ActivateZTProductFile,
