@@ -33,7 +33,7 @@ service ZTPromocionesService @(path:'/api/ztpromociones') {
     FechaFin: String,
     SKUID: String,
     IdListaOK: String,
-    DescuentoPorcentaje: Double,
+    ![Descuento%]: Double,
     REGUSER: String,
     REGDATE: String,
     MODUSER: String,
