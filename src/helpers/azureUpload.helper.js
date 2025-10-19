@@ -3,15 +3,16 @@ const fs = require('fs/promises');
 const path = require('path');
 const crypto = require('crypto');
 const { ZTProduct_FILES } = require('../api/models/mongodb/ztproducts_files');
+const { saveWithAudit } = require('./audit-timestap');
 
-async function handleUploadZTProductFileCDS(file, body) {
+async function handleUploadZTProductFileCDS(file, body, user) {
   if (!file) {
     return { status: 400, data: { error: 'No se recibió archivo.' } };
   }
 
-  const { SKUID, FILETYPE, PRINCIPAL, SECUENCE, INFOAD, IdPresentaOK, REGUSER } = body;
-  if (!SKUID || !FILETYPE || !REGUSER) {
-    return { status: 400, data: { error: 'Faltan campos requeridos: SKUID, FILETYPE, REGUSER.' } };
+  const { SKUID, FILETYPE, PRINCIPAL, SECUENCE, INFOAD, IdPresentaOK } = body;
+  if (!SKUID || !FILETYPE || !user) {
+    return { status: 400, data: { error: 'Faltan campos requeridos: SKUID, FILETYPE, y el usuario.' } };
   }
 
   const AZURE_BLOB_SAS_URL = process.env.AZURE_BLOB_SAS_URL;
@@ -44,32 +45,29 @@ async function handleUploadZTProductFileCDS(file, body) {
     });
 
     // Guardar documento en MongoDB
-    const fileDoc = await ZTProduct_FILES.create({
+    const fileData = {
       FILEID: uniqueId,
       SKUID,
       IdPresentaOK: IdPresentaOK || null,
       FILETYPE,
       FILE: publicUrl,
       PRINCIPAL: PRINCIPAL === 'true' || PRINCIPAL === true,
-      SECUENCE: SECUENCE ? Number(SECUENCE) : 0,
+      SECUENCE: SECUENCE ? Number(SECUENCE) : 0, // eslint-disable-line
       INFOAD: INFOAD || '',
-      REGUSER,
-      REGDATE: new Date(),
       ACTIVED: true,
       DELETED: false
-    });
+    };
+
+    const fileDoc = await saveWithAudit(ZTProduct_FILES, null, fileData, user, 'CREATE');
 
     // Borrar archivo temporal si existe
     if (file.path) {
       await fs.unlink(file.path).catch(() => {});
     }
 
-    // Convertir documento a JSON plano para evitar stack overflow
-    const safeFile = fileDoc.toJSON();
-
     return {
       status: 201,
-      data: { url: publicUrl, file: safeFile }
+      data: { url: publicUrl, file: fileDoc }
     };
   } catch (error) {
     // Borrar archivo temporal si existe
@@ -104,7 +102,7 @@ async function handleUploadZTProductFileCDS(file, body) {
 
 
 
-async function handleUpdateZTProductFileCDS(fileid, file, body) {
+async function handleUpdateZTProductFileCDS(fileid, file, body, user) {
   const AZURE_BLOB_SAS_URL = process.env.AZURE_BLOB_SAS_URL;
 
   // 1. Buscar archivo existente
@@ -135,14 +133,17 @@ async function handleUpdateZTProductFileCDS(fileid, file, body) {
   });
 
   // 4. Actualizar el registro en MongoDB
-  existingFile.FILE = publicUrl;
-  existingFile.FILETYPE = body.FILETYPE || existingFile.FILETYPE;
-  existingFile.PRINCIPAL = body.PRINCIPAL ?? existingFile.PRINCIPAL;
-  existingFile.SECUENCE = body.SECUENCE ?? existingFile.SECUENCE;
-  existingFile.INFOAD = body.INFOAD ?? existingFile.INFOAD;
-  existingFile.updatedAt = new Date();
+  const updateData = {
+    FILE: publicUrl,
+    FILETYPE: body.FILETYPE || existingFile.FILETYPE,
+    PRINCIPAL: body.PRINCIPAL ?? existingFile.PRINCIPAL,
+    SECUENCE: body.SECUENCE ?? existingFile.SECUENCE, // eslint-disable-line
+    INFOAD: body.INFOAD ?? existingFile.INFOAD,
+  };
 
-  await existingFile.save();
+  const filter = { FILEID: fileid };
+  const userForAudit = user || 'SYSTEM_UPDATE'; // Asumir un usuario si no se provee
+  const updatedFile = await saveWithAudit(ZTProduct_FILES, filter, updateData, userForAudit, 'UPDATE');
 
   // 5. (Opcional) Eliminar archivo viejo de Azure pero por ahora no lo hare xd
   // 
@@ -154,7 +155,7 @@ async function handleUpdateZTProductFileCDS(fileid, file, body) {
     data: {
       message: 'Archivo actualizado correctamente',
       url: publicUrl,
-      file: existingFile.toJSON()
+      file: updatedFile
     }
   };
 }

@@ -32,6 +32,9 @@
     "folders": {
       "db": "src/api/models",
       "srv": "src/api/routes"
+    },
+    "server": {
+      "body_parser_limit": "50mb"
     }
   },
   "requires": {

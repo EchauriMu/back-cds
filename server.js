@@ -20,8 +20,14 @@ module.exports = async (o) =>{
         // const app = express();
 
 
-        //Echauri imit json api para  files 64
-        app.use(express.json({limit: "50mb"}));
+        // --- SOLUCIÓN DEFINITIVA PARA EL LÍMITE DEL BODY-PARSER ---
+        // Usamos el evento 'bootstrap' de CDS para obtener control antes de que se añadan los middlewares.
+        cds.on('bootstrap', (app) => {
+            // Reemplazamos el body-parser por defecto de CDS con uno que tenga el límite aumentado.
+            // Esto asegura que TODAS las peticiones, incluidas las de los servicios CDS,
+            // usen nuestra configuración de límite.
+            app.use(express.json({ limit: '50mb' }));
+        });
 
         app.use(cors());
         app.use(docEnvX.API_URL,router)
