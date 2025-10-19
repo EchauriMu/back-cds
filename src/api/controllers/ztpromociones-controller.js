@@ -17,29 +17,17 @@ class ZTPromocionesService extends cds.ApplicationService {
        */
       this.on('crudPromociones', async (req) => {
         try {
-          // Bypass CDS parameter validation by clearing req.data and using query/body directly
-          const originalData = req.data;
-          req.data = null; // Clear to avoid parameter validation
-          
+          // 1. Obtener ProcessType del query string
           const ProcessType = req.req?.query?.ProcessType;
           
-          // Debug: Log request structure for AddMany operations
-          if (ProcessType === 'AddMany') {
-            console.log('[DEBUG] Request originalData:', JSON.stringify(originalData, null, 2));
-            console.log('[DEBUG] Request body:', JSON.stringify(req.req?.body, null, 2));
-            console.log('[DEBUG] Request query:', JSON.stringify(req.req?.query, null, 2));
-          }
-          
-          // Ejecutar servicio
+          // 2. Ejecutar la lógica de negocio
           const result = await crudZTPromociones(req);
 
-          // Restore original data for response
-          req.data = originalData;
-
-          // Establecer status HTTP
+          // 3. Si el resultado no es exitoso, establecer el status HTTP de error
           if (!result.success && req.http?.res) {
             req.http.res.status(result.status || 500);
           } 
+          // 4. Si es exitoso y es un AddMany, establecer status 201 y header
           else if (ProcessType === 'AddMany' && result.success && req.http?.res) {
             req.http.res.status(201);
             const promoCount = result.dataRes?.length || result.countDataRes || 0;
@@ -48,6 +36,7 @@ class ZTPromocionesService extends cds.ApplicationService {
             }
           }
           
+          // 5. Retornar el resultado para que CAP lo envíe como respuesta
           return result;
           
         } catch (error) {

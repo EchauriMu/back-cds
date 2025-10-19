@@ -10,20 +10,7 @@ const { saveWithAudit } = require('../../helpers/audit-timestap');
 // UTIL: Extraer payload del request
 // ============================================
 function getPayload(req) {
-  // Try multiple sources for the request body
-  const payload = req.data || req.req?.body || req.body || null;
-  
-  // Debug log for AddMany operations
-  const processType = req.req?.query?.ProcessType;
-  if (processType === 'AddMany') {
-    console.log('[DEBUG getPayload] ProcessType:', processType);
-    console.log('[DEBUG getPayload] req.data:', req.data);
-    console.log('[DEBUG getPayload] req.req?.body:', req.req?.body);
-    console.log('[DEBUG getPayload] req.body:', req.body);
-    console.log('[DEBUG getPayload] Final payload:', payload);
-  }
-  
-  return payload;
+  return req.data || req.req?.body || req.body || null;
 }
 
 // ============================================

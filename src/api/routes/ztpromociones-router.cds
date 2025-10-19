@@ -21,31 +21,56 @@ service ZTPromocionesService @(path:'/api/ztpromociones') {
   // ========================================
   
   @Core.Description: 'CRUD Promociones con bitácora'
-  @Common.SideEffects.TargetEntities: [Promociones]
+  @path: 'crudPromociones'
   action crudPromociones(
-    req: String
-  )
-  returns array of Promociones;
+    ProcessType: String,
+    LoggedUser: String,
+    DBServer: String,
+    IdPromoOK: String,
+    Titulo: String,
+    Descripcion: String,
+    FechaIni: String,
+    FechaFin: String,
+    SKUID: String,
+    IdListaOK: String,
+    DescuentoPorcentaje: Double,
+    REGUSER: String,
+    REGDATE: String,
+    MODUSER: String,
+    MODDATE: String,
+    ACTIVED: Boolean,
+    DELETED: Boolean,
+    vigentes: String,
+    limit: Integer,
+    offset: Integer,
+    deleteType: String
+  ) returns array of Promociones;
 
-  // ========================================
-  // EJEMPLOS DE USO
-  // ========================================
-
+  
   // GET FILTERS (genérico)
   // POST /api/ztpromociones/crudPromociones?ProcessType=GetFilters&LoggedUser=jlopezm
-  // Filtros opcionales: IdPromoOK, SKUID, IdListaOK, vigentes, limit, offset
-
+  
+  // GET ONE PROMOCION
+  // POST /api/ztpromociones/crudPromociones?ProcessType=GetOne&LoggedUser=jlopezm&IdPromoOK=PROMO001
+  
   // ADD MANY
   // POST /api/ztpromociones/crudPromociones?ProcessType=AddMany&LoggedUser=jlopezm
   // Body: { "promociones": [{ "IdPromoOK": "PROMO001", "Titulo": "...", ... }] }
-
+  
   // UPDATE MANY
   // POST /api/ztpromociones/crudPromociones?ProcessType=UpdateMany&LoggedUser=jlopezm
   // Body: { "filter": { "IdListaOK": "LISTA001" }, "updates": { "ACTIVED": false } }
-
-  // DELETE MANY
-  // POST /api/ztpromociones/crudPromociones?ProcessType=DeleteMany&LoggedUser=jlopezm
-  // Body: { "filter": { "FechaFin": { "$lt": "2024-01-01" } }, "deleteType": "logic" }
+  
+  // DELETE LOGIC
+  // POST /api/ztpromociones/crudPromociones?ProcessType=DeleteMany&LoggedUser=jlopezm&deleteType=logic
+  // Body: { "filter": { "IdPromoOK": "PROMO001" } }
+  
+  // DELETE HARD
+  // POST /api/ztpromociones/crudPromociones?ProcessType=DeleteMany&LoggedUser=jlopezm&deleteType=hard
+  // Body: { "filter": { "IdPromoOK": "PROMO001" } }
+  
+  // ACTIVATE PROMOCION
+  // POST /api/ztpromociones/crudPromociones?ProcessType=Activate&LoggedUser=jlopezm&IdPromoOK=PROMO001
 
   // ========================================
   // LEGACY (DEPRECADO)
