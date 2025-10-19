@@ -22,17 +22,20 @@ async function saveWithAudit(model, filter, data, user, action) {
   }
 
   if (action === 'UPDATE') {
-    const updatedDoc = await model.findOneAndUpdate(
-      filter,
-      {
-        ...data,
-        MODUSER: user,
-        MODDATE: now,
-      },
-      { new: true, upsert: false }
-    );
-    if (!updatedDoc) throw new Error('Documento no encontrado para actualizar');
-    return updatedDoc.toObject();
+    // 1. Encontrar el documento
+    const docToUpdate = await model.findOne(filter);
+    if (!docToUpdate) throw new Error('Documento no encontrado para actualizar');
+
+    // 2. Asignar los nuevos datos y los campos de auditoría
+    Object.assign(docToUpdate, data);
+    docToUpdate.MODUSER = user;
+    docToUpdate.MODDATE = now;
+
+    // 3. Guardar el documento. Esto disparará el middleware pre('save') del modelo.
+    await docToUpdate.save();
+
+    // 4. Devolver el documento actualizado como un objeto plano
+    return docToUpdate.toObject();
   }
 
   throw new Error('Acción no soportada: ' + action);
