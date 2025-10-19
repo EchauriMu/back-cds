@@ -6,10 +6,6 @@ service ZTProductsService @(path:'/api/ztproducts') {
 
   entity Products as projection on mypr.ZTPRODUCTS;
 
-  @Core.Description: 'CRUD de Prodcutos'
-  @path: 'ZTProductCRUD'
-  action ZTProductCRUD() returns array of Products;
-
   @Core.Description: 'CRUD de Productos con Bitácora'
   @path: 'crudProducts'
   action crudProducts() returns String;

@@ -31,36 +31,34 @@ async function crudZTProducts(req) {
 
     switch (ProcessType) {
 
-      case 'GetAll':
-            //FIC: Get All Products Method
-            //------------------------------------------------------           
-            bitacora = await GetAllProductsMethod(bitacora, params, paramString, body)
-            .then((bitacora) => {
-                if (!bitacora.success) {
-                    bitacora.finalRes = true;
-                    throw bitacora;
-                };
-                return bitacora;
-            });
+      case 'get':
+            //FIC: Get Products Method (getall, getone)
+            //------------------------------------------------------
+            const type = params.type;
+            if (type === 'all' || type === 'getall' || type === 'one' || type === 'getone') {
+                bitacora = await GetProductMethod(bitacora, params, paramString, body)
+                .then((bitacora) => {
+                    if (!bitacora.success) {
+                        bitacora.finalRes = true;
+                        throw bitacora;
+                    };
+                    return bitacora;
+                });
+            } else {
+                data.status = 400;
+                data.messageDEV = "Tipo de búsqueda inválido (all/getall o one/getone)";
+                data.messageUSR = "Tipo de búsqueda no válido";
+                data.dataRes = null;
+                bitacora = AddMSG(bitacora, data, "FAIL");
+                bitacora.finalRes = true;
+                throw bitacora;
+            }
         break;
 
-      case 'GetOne':
-            //FIC: Get One Product Method
-            //------------------------------------------------------           
-            bitacora = await GetOneProductMethod(bitacora, params, paramString, body)
-            .then((bitacora) => {
-                if (!bitacora.success) {
-                    bitacora.finalRes = true;
-                    throw bitacora;
-                };
-                return bitacora;
-            });
-        break;
-    
-      case 'AddOne':
+      case 'post':
             //FIC: Add One Product Method
             //------------------------------------------------------           
-            bitacora = await AddOneProductMethod(bitacora, params, paramString, body)
+            bitacora = await AddProductMethod(bitacora, params, paramString, body)
             .then((bitacora) => {
                 if (!bitacora.success) {
                     bitacora.finalRes = true;
@@ -70,23 +68,60 @@ async function crudZTProducts(req) {
             });
         break;
 
-      case 'UpdateOne':
-            //FIC: Update One Product Method
-            //------------------------------------------------------           
-            bitacora = await UpdateOneProductMethod(bitacora, params, paramString, body)
-            .then((bitacora) => {
-                if (!bitacora.success) {
-                    bitacora.finalRes = true;
-                    throw bitacora;
-                };
-                return bitacora;
-            });
+      case 'put':
+            //FIC: Update/Activate Product Method (update, activate)
+            //------------------------------------------------------
+            const operation = params.operation || params.type || 'update';
+            
+            if (operation === 'activate' || operation === 'update') {
+                bitacora = await UpdateProductMethod(bitacora, params, paramString, body)
+                .then((bitacora) => {
+                    if (!bitacora.success) {
+                        bitacora.finalRes = true;
+                        throw bitacora;
+                    };
+                    return bitacora;
+                });
+            } else {
+                data.status = 400;
+                data.messageDEV = "Operación inválida para PUT (activate o update)";
+                data.messageUSR = "Operación no válida";
+                data.dataRes = null;
+                bitacora = AddMSG(bitacora, data, "FAIL");
+                bitacora.finalRes = true;
+                throw bitacora;
+            }
         break;
 
-      case 'DeleteOne':
-            //FIC: Delete One Product Method
+      case 'delete':
+            //FIC: Delete Product Method (soft, hard)
+            //------------------------------------------------------
+            const deleteType = params.type;
+            
+            if (deleteType === 'soft' || deleteType === 'logic' || deleteType === 'hard') {
+                bitacora = await DeleteProductMethod(bitacora, params, paramString, body)
+                .then((bitacora) => {
+                    if (!bitacora.success) {
+                        bitacora.finalRes = true;
+                        throw bitacora;
+                    };
+                    return bitacora;
+                });
+            } else {
+                data.status = 400;
+                data.messageDEV = "Tipo de borrado inválido (soft/logic o hard)";
+                data.messageUSR = "Tipo de eliminación no válido";
+                data.dataRes = null;
+                bitacora = AddMSG(bitacora, data, "FAIL");
+                bitacora.finalRes = true;
+                throw bitacora;
+            }
+        break;
+
+      case 'activate':
+            //FIC: Activate Product Method (shortcut)
             //------------------------------------------------------           
-            bitacora = await DeleteOneProductMethod(bitacora, params, paramString, body)
+            bitacora = await UpdateProductMethod(bitacora, params, paramString, body)
             .then((bitacora) => {
                 if (!bitacora.success) {
                     bitacora.finalRes = true;
@@ -98,7 +133,7 @@ async function crudZTProducts(req) {
 
       default:
         data.status = 400;
-        data.messageDEV = `ProcessType '${ProcessType}' no es válido`;
+        data.messageDEV = `ProcessType '${ProcessType}' no es válido. Tipos válidos: get, post, put, delete, activate`;
         data.messageUSR = "Tipo de proceso no válido";
         data.dataRes = null;
         bitacora = AddMSG(bitacora, data, "FAIL");
@@ -139,89 +174,77 @@ async function crudZTProducts(req) {
     }
 }
 
-//----------------------------------------
+//####################################################################################
 //FIC: Methods for each operation with Bitacora
-//----------------------------------------
+//####################################################################################
 
-async function GetAllProductsMethod(bitacora, params, paramString, body) {
+async function GetProductMethod(bitacora, params, paramString, body) {
     let data = DATA();
     
     try {
-        //FIC: Log configuration
-        bitacora.process = "Obtener todos los PRODUCTOS";
-        data.method = "GET";
-        data.api = "/crud?ProcessType=GetAll";
-        data.process = "Consulta de productos";
-        data.principal = true;
+        const type = params.type;
+        
+        if (type === 'all' || type === 'getall') {
+            //FIC: Log configuration for GET ALL
+            bitacora.process = "Obtener todos los PRODUCTOS";
+            data.method = "GET";
+            data.api = "/crud?ProcessType=get&type=all";
+            data.process = "Consulta de productos";
+            data.principal = true;
 
-        // Call the original function
-        const productos = await GetAllZTProduct();
-        
-        data.status = 200;
-        data.messageUSR = `Se obtuvieron ${productos.length} productos correctamente`;
-        data.messageDEV = `Query ejecutada exitosamente. Productos encontrados: ${productos.length}`;
-        data.dataRes = productos;
-        
-        bitacora = AddMSG(bitacora, data, "OK", 200, true);
-        
-        return bitacora;
-        
-    } catch (error) {
-        data.status = 500;
-        data.messageDEV = error.message;
-        data.messageUSR = "Error al obtener los productos";
-        data.dataRes = null;
-        
-        bitacora = AddMSG(bitacora, data, "FAIL");
-        return bitacora;
-    }
-}
-
-async function GetOneProductMethod(bitacora, params, paramString, body) {
-    let data = DATA();
-    
-    try {
-        //FIC: Log configuration
-        bitacora.process = "Obtener UN PRODUCTO";
-        data.method = "GET";
-        data.api = "/crud?ProcessType=GetOne";
-        data.process = "Consulta de producto específico";
-        data.principal = true;
-
-        const skuid = params.skuid || params.SKUID;
-        
-        if (!skuid) {
-            data.status = 400;
-            data.messageDEV = "SKUID es requerido para obtener un producto";
-            data.messageUSR = "ID de producto requerido";
-            data.dataRes = null;
-            bitacora = AddMSG(bitacora, data, "FAIL");
-            return bitacora;
-        }
-
-        // Call the original function
-        const producto = await GetOneZTProduct(skuid);
-        
-        if (!producto) {
-            data.status = 404;
-            data.messageUSR = "Producto no encontrado";
-            data.messageDEV = `Producto con SKUID ${skuid} no encontrado`;
-            data.dataRes = null;
-        } else {
+            // Call the original function
+            const productos = await GetAllZTProduct();
+            
             data.status = 200;
-            data.messageUSR = "Producto encontrado correctamente";
-            data.messageDEV = `Producto con SKUID ${skuid} encontrado`;
-            data.dataRes = producto;
+            data.messageUSR = `Se obtuvieron ${productos.length} productos correctamente`;
+            data.messageDEV = `Query ejecutada exitosamente. Productos encontrados: ${productos.length}`;
+            data.dataRes = productos;
+            
+            bitacora = AddMSG(bitacora, data, "OK", 200, true);
+            
+        } else if (type === 'one' || type === 'getone') {
+            //FIC: Log configuration for GET ONE
+            bitacora.process = "Obtener UN PRODUCTO";
+            data.method = "GET";
+            data.api = "/crud?ProcessType=get&type=one";
+            data.process = "Consulta de producto específico";
+            data.principal = true;
+
+            const skuid = params.skuid || params.SKUID;
+            
+            if (!skuid) {
+                data.status = 400;
+                data.messageDEV = "SKUID es requerido para obtener un producto";
+                data.messageUSR = "ID de producto requerido";
+                data.dataRes = null;
+                bitacora = AddMSG(bitacora, data, "FAIL");
+                return bitacora;
+            }
+
+            // Call the original function
+            const producto = await GetOneZTProduct(skuid);
+            
+            if (!producto) {
+                data.status = 404;
+                data.messageUSR = "Producto no encontrado";
+                data.messageDEV = `Producto con SKUID ${skuid} no encontrado`;
+                data.dataRes = null;
+            } else {
+                data.status = 200;
+                data.messageUSR = "Producto encontrado correctamente";
+                data.messageDEV = `Producto con SKUID ${skuid} encontrado`;
+                data.dataRes = producto;
+            }
+            
+            bitacora = AddMSG(bitacora, data, producto ? "OK" : "FAIL", data.status, true);
         }
-        
-        bitacora = AddMSG(bitacora, data, producto ? "OK" : "FAIL", data.status, true);
         
         return bitacora;
         
     } catch (error) {
         data.status = 500;
         data.messageDEV = error.message;
-        data.messageUSR = "Error al obtener el producto";
+        data.messageUSR = "Error al obtener el/los producto(s)";
         data.dataRes = null;
         
         bitacora = AddMSG(bitacora, data, "FAIL");
@@ -229,14 +252,14 @@ async function GetOneProductMethod(bitacora, params, paramString, body) {
     }
 }
 
-async function AddOneProductMethod(bitacora, params, paramString, body) {
+async function AddProductMethod(bitacora, params, paramString, body) {
     let data = DATA();
     
     try {
         //FIC: Log configuration
         bitacora.process = "Agregar UN PRODUCTO";
         data.method = "POST";
-        data.api = "/crud?ProcessType=AddOne";
+        data.api = "/crud?ProcessType=post";
         data.process = "Creación de producto";
         data.principal = true;
 
@@ -271,52 +294,80 @@ async function AddOneProductMethod(bitacora, params, paramString, body) {
     }
 }
 
-async function UpdateOneProductMethod(bitacora, params, paramString, body) {
+async function UpdateProductMethod(bitacora, params, paramString, body) {
     let data = DATA();
     
     try {
-        //FIC: Log configuration
-        bitacora.process = "Actualizar UN PRODUCTO";
-        data.method = "PUT";
-        data.api = "/crud?ProcessType=UpdateOne";
-        data.process = "Actualización de producto";
-        data.principal = true;
-
+        const operation = params.operation || params.type || 'update';
         const skuid = params.skuid || params.SKUID;
         
         if (!skuid) {
             data.status = 400;
-            data.messageDEV = "SKUID es requerido para actualizar un producto";
+            data.messageDEV = "SKUID es requerido para actualizar/activar un producto";
             data.messageUSR = "ID de producto requerido";
             data.dataRes = null;
             bitacora = AddMSG(bitacora, data, "FAIL");
             return bitacora;
         }
 
-        // Simulate req object for UpdateZTProduct
-        const mockReq = {
-            req: {
-                data: { skuid, ...body },
-                body: body || {}
-            }
-        };
+        if (operation === 'activate') {
+            //FIC: Log configuration for ACTIVATE
+            bitacora.process = "Activar UN PRODUCTO";
+            data.method = "PUT";
+            data.api = "/crud?ProcessType=put&operation=activate";
+            data.process = "Activación de producto";
+            data.principal = true;
 
-        // Call the original function
-        const resultado = await UpdateZTProduct(mockReq, skuid);
-        
-        data.status = 200;
-        data.messageUSR = "Producto actualizado exitosamente";
-        data.messageDEV = `Producto con SKUID ${skuid} actualizado`;
-        data.dataRes = resultado;
-        
-        bitacora = AddMSG(bitacora, data, "OK", 200, true);
+            // Call the original function
+            const resultado = await ActivateZTProduct(skuid);
+            
+            if (resultado.error) {
+                data.status = 404;
+                data.messageUSR = resultado.message;
+                data.messageDEV = `Error al activar producto con SKUID ${skuid}`;
+                data.dataRes = null;
+                bitacora = AddMSG(bitacora, data, "FAIL");
+            } else {
+                data.status = 200;
+                data.messageUSR = "Producto activado exitosamente";
+                data.messageDEV = `Producto con SKUID ${skuid} activado correctamente`;
+                data.dataRes = resultado;
+                bitacora = AddMSG(bitacora, data, "OK", 200, true);
+            }
+            
+        } else {
+            //FIC: Log configuration for UPDATE
+            bitacora.process = "Actualizar UN PRODUCTO";
+            data.method = "PUT";
+            data.api = "/crud?ProcessType=put";
+            data.process = "Actualización de producto";
+            data.principal = true;
+
+            // Simulate req object for UpdateZTProduct
+            const mockReq = {
+                req: {
+                    data: { skuid, ...body },
+                    body: body || {}
+                }
+            };
+
+            // Call the original function
+            const resultado = await UpdateZTProduct(mockReq, skuid);
+            
+            data.status = 200;
+            data.messageUSR = "Producto actualizado exitosamente";
+            data.messageDEV = `Producto con SKUID ${skuid} actualizado`;
+            data.dataRes = resultado;
+            
+            bitacora = AddMSG(bitacora, data, "OK", 200, true);
+        }
         
         return bitacora;
         
     } catch (error) {
         data.status = 500;
         data.messageDEV = error.message;
-        data.messageUSR = "Error al actualizar el producto";
+        data.messageUSR = "Error al actualizar/activar el producto";
         data.dataRes = null;
         
         bitacora = AddMSG(bitacora, data, "FAIL");
@@ -324,17 +375,11 @@ async function UpdateOneProductMethod(bitacora, params, paramString, body) {
     }
 }
 
-async function DeleteOneProductMethod(bitacora, params, paramString, body) {
+async function DeleteProductMethod(bitacora, params, paramString, body) {
     let data = DATA();
     
     try {
-        //FIC: Log configuration
-        bitacora.process = "Eliminar UN PRODUCTO";
-        data.method = "DELETE";
-        data.api = "/crud?ProcessType=DeleteOne";
-        data.process = "Eliminación de producto";
-        data.principal = true;
-
+        const deleteType = params.type;
         const skuid = params.skuid || params.SKUID;
         
         if (!skuid) {
@@ -346,15 +391,49 @@ async function DeleteOneProductMethod(bitacora, params, paramString, body) {
             return bitacora;
         }
 
-        // Call the original function (logic delete)
-        const resultado = await DeleteZTProductLogic(skuid);
-        
-        data.status = 200;
-        data.messageUSR = "Producto eliminado exitosamente";
-        data.messageDEV = `Producto con SKUID ${skuid} eliminado lógicamente`;
-        data.dataRes = resultado;
-        
-        bitacora = AddMSG(bitacora, data, "OK", 200, true);
+        if (deleteType === 'soft' || deleteType === 'logic') {
+            //FIC: Log configuration for SOFT DELETE
+            bitacora.process = "Eliminar UN PRODUCTO";
+            data.method = "DELETE";
+            data.api = "/crud?ProcessType=delete&type=soft";
+            data.process = "Eliminación lógica de producto";
+            data.principal = true;
+
+            // Call the original function (logic delete)
+            const resultado = await DeleteZTProductLogic(skuid);
+            
+            data.status = 200;
+            data.messageUSR = "Producto eliminado exitosamente";
+            data.messageDEV = `Producto con SKUID ${skuid} eliminado lógicamente`;
+            data.dataRes = resultado;
+            
+            bitacora = AddMSG(bitacora, data, "OK", 200, true);
+            
+        } else if (deleteType === 'hard') {
+            //FIC: Log configuration for HARD DELETE
+            bitacora.process = "Eliminar FÍSICAMENTE UN PRODUCTO";
+            data.method = "DELETE";
+            data.api = "/crud?ProcessType=delete&type=hard";
+            data.process = "Eliminación física de producto";
+            data.principal = true;
+
+            // Call the original function (hard delete)
+            const resultado = await DeleteZTProductHard(skuid);
+            
+            if (!resultado) {
+                data.status = 404;
+                data.messageUSR = "Producto no encontrado para eliminación física";
+                data.messageDEV = `Producto con SKUID ${skuid} no encontrado`;
+                data.dataRes = null;
+                bitacora = AddMSG(bitacora, data, "FAIL");
+            } else {
+                data.status = 200;
+                data.messageUSR = "Producto eliminado físicamente";
+                data.messageDEV = `Producto con SKUID ${skuid} eliminado físicamente`;
+                data.dataRes = resultado;
+                bitacora = AddMSG(bitacora, data, "OK", 200, true);
+            }
+        }
         
         return bitacora;
         
@@ -368,6 +447,11 @@ async function DeleteOneProductMethod(bitacora, params, paramString, body) {
         return bitacora;
     }
 }
+
+//####################################################################################
+//####################################################################################
+//####################################################################################
+//####################################################################################
 
 // GET ALL PRODUCTS
 async function GetAllZTProduct() {
@@ -615,60 +699,60 @@ async function ActivateZTProduct(skuid) {
 } 
 
 
-async function ZTProductCRUD(req) {
-  try {
-    const { procedure, type, skuid } = req.req.query;
-    let res;
+// async function ZTProductCRUD(req) {
+//   try {
+//     const { procedure, type, skuid } = req.req.query;
+//     let res;
     
-    switch (procedure) {
-      case 'get':
-        switch (type) {
-          case 'all':
-            res = await GetAllZTProduct();
-            break;
-          case 'one':
-            res = await GetOneZTProduct(skuid);
-            break;
-          default:
-            throw new Error('Coloca un tipo de búsqueda válido (all o one)');
-        }
-        break;
+//     switch (procedure) {
+//       case 'get':
+//         switch (type) {
+//           case 'all':
+//             res = await GetAllZTProduct();
+//             break;
+//           case 'one':
+//             res = await GetOneZTProduct(skuid);
+//             break;
+//           default:
+//             throw new Error('Coloca un tipo de búsqueda válido (all o one)');
+//         }
+//         break;
         
-      case 'post':
-        res = await CreateZTProduct(req);
-        break;
+//       case 'post':
+//         res = await CreateZTProduct(req);
+//         break;
         
-      case 'put':
-        res = await UpdateZTProduct(req, skuid);
-        break;
+//       case 'put':
+//         res = await UpdateZTProduct(req, skuid);
+//         break;
         
-      case 'delete':
-        switch (type) {
-          case 'logic':
-            res = await DeleteZTProductLogic(skuid);
-            break;
-          case 'hard':
-            res = await DeleteZTProductHard(skuid);
-            break;
-          default:
-            throw new Error('Tipo de borrado inválido (logic o hard)');
-        }
-        break;
+//       case 'delete':
+//         switch (type) {
+//           case 'logic':
+//             res = await DeleteZTProductLogic(skuid);
+//             break;
+//           case 'hard':
+//             res = await DeleteZTProductHard(skuid);
+//             break;
+//           default:
+//             throw new Error('Tipo de borrado inválido (logic o hard)');
+//         }
+//         break;
         
-      case 'activate':
-        res = await ActivateZTProduct(skuid);
-        break;
+//       case 'activate':
+//         res = await ActivateZTProduct(skuid);
+//         break;
         
-      default:
-        throw new Error('Parámetros inválidos o incompletos');
-    }
+//       default:
+//         throw new Error('Parámetros inválidos o incompletos');
+//     }
     
-    return res;
-  } catch (error) {
-    console.error('Error en ZTProductCRUD:', error);
-    return { error: true, message: error.message };
-  }
-}
+//     return res;
+//   } catch (error) {
+//     console.error('Error en ZTProductCRUD:', error);
+//     return { error: true, message: error.message };
+//   }
+// }
 
 
 module.exports = {
@@ -679,6 +763,6 @@ module.exports = {
   DeleteZTProductLogic,
   DeleteZTProductHard,
   ActivateZTProduct,
-  ZTProductCRUD,
+  // ZTProductCRUD,
   crudZTProducts
 };
