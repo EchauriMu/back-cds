@@ -34,6 +34,7 @@ service ZTPromocionesService @(path:'/api/ztpromociones') {
     FechaIni: String,
     FechaFin: String,
     DescuentoPorcentaje: Double,
+    ![Descuento%]: Double,
     vigentes: String,
     limit: Integer,
     offset: Integer,
