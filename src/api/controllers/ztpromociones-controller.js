@@ -1,26 +1,71 @@
 const cds = require('@sap/cds');
-const { ZTPromocionesCRUD, crudZTPromociones } = require('../services/ztpromociones-service');
+const { crudZTPromociones, ZTPromocionesCRUD } = require('../services/ztpromociones-service');
 
+/**
+ * Controller de Promociones - SAP CAP
+ * 
+ * Endpoints:
+ * - crudPromociones: Endpoint estándar con bitácora completa
+ * - promocionesCRUD: Legacy (deprecado)
+ */
 class ZTPromocionesService extends cds.ApplicationService {
   async init() {
-      this.on('promocionesCRUD', (req) => {
-        console.log("Hola");
-        return ZTPromocionesCRUD(req);
-      });
-
-      // Nueva función con bitácora
+      
+      /**
+       * Endpoint Principal: POST /api/ztpromociones/crudPromociones
+       * Parámetros: ?ProcessType=GetFilters&LoggedUser=jlopezm
+       */
       this.on('crudPromociones', async (req) => {
-        console.log("[ZTPromociones Bitácora] Procesando request con bitácora");
         try {
-          const resultado = await crudZTPromociones(req);
-          return resultado;
+          const ProcessType = req.req?.query?.ProcessType;
+          
+          // Ejecutar servicio
+          const result = await crudZTPromociones(req);
+
+          // Establecer status HTTP
+          if (!result.success && req.http?.res) {
+            req.http.res.status(result.status || 500);
+          } 
+          else if (ProcessType === 'AddMany' && result.success && req.http?.res) {
+            req.http.res.status(201);
+            const promoCount = result.dataRes?.length || result.countDataRes || 0;
+            if (promoCount > 0) {
+              req.http.res.set('X-Created-Count', promoCount.toString());
+            }
+          }
+          
+          return result;
+          
         } catch (error) {
-          console.error("[ZTPromociones Bitácora] Error:", error);
-          req.error(500, `Error procesando la solicitud: ${error.message}`);
+          req.error(error.code || 500, error.message);
         }
       });
 
-      await super.init();
+      /**
+       * Endpoint Legacy (deprecado)
+       * ADVERTENCIA: Migre a 'crudPromociones'
+       */
+      this.on('promocionesCRUD', async (req) => {
+        console.warn("[LEGACY] Use 'crudPromociones' en lugar de 'promocionesCRUD'");
+        
+        try {
+          const resultado = await ZTPromocionesCRUD(req);
+          
+          if (resultado && typeof resultado === 'object') {
+            resultado._deprecated = true;
+            resultado._migration_info = "Use 'crudPromociones' con ProcessType";
+            resultado._new_endpoint = "/api/ztpromociones/crudPromociones";
+          }
+          
+          return resultado;
+          
+        } catch (error) {
+          console.error("[LEGACY] Error:", error.message);
+          req.error(error.code || 500, error.message);
+        }
+      });
+
+      return super.init();
   }
 }
 

@@ -1,0 +1,65 @@
+POST http://localhost:3033/api/ztpromociones/crudPromociones?ProcessType=GetFilters&DBServer=MongoDB&LoggedUser=lpaniaguag&limit=50&offset=0
+Content-Type: application/json
+
+###
+
+POST http://localhost:3033/api/ztpromociones/crudPromociones?ProcessType=GetFilters&DBServer=MongoDB&LoggedUser=lpaniaguag&IdPromoOK=PROMO001
+Content-Type: application/json
+
+###
+
+POST http://localhost:3033/api/ztpromociones/crudPromociones?ProcessType=GetFilters&DBServer=MongoDB&LoggedUser=lpaniaguag&SKUID=P001
+Content-Type: application/json
+
+###
+
+POST http://localhost:3033/api/ztpromociones/crudPromociones?ProcessType=AddMany&DBServer=MongoDB&LoggedUser=lpaniaguag
+Content-Type: application/json
+
+{
+  "promociones": [
+    {
+      "IdPromoOK": "PROMO002",
+      "Titulo": "Descuento otoño",
+      "Descripcion": "15% de descuento en producto P002",
+      "FechaIni": "2024-10-18T00:00:00Z",
+      "FechaFin": "2024-12-31T00:00:00Z",
+      "SKUID": "P002",
+      "IdListaOK": null,
+      "Descuento%": 15
+    }
+  ]
+}
+
+###
+
+POST http://localhost:3033/api/ztpromociones/crudPromociones?ProcessType=UpdateMany&DBServer=MongoDB&LoggedUser=lpaniaguag
+Content-Type: application/json
+
+{
+  "filter": {
+    "IdPromoOK": "PROMO001"
+  },
+  "updates": {
+    "Titulo": "Descuento verano EXTENDIDO",
+    "Descripcion": "15% de descuento en producto P001 - OFERTA EXTENDIDA",
+    "Descuento%": 15
+  }
+}
+
+###
+
+POST http://localhost:3033/api/ztpromociones/crudPromociones?ProcessType=DeleteMany&DBServer=MongoDB&LoggedUser=lpaniaguag&deleteType=logic
+Content-Type: application/json
+
+{
+  "filter": {
+    "IdPromoOK": "PROMO001"
+  },
+  "deleteType": "logic"
+}
+
+###
+
+POST http://localhost:3033/api/ztpromociones/promocionesCRUD?procedure=get&type=all
+Content-Type: application/json

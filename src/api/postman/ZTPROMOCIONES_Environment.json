@@ -1,0 +1,69 @@
+{
+  "id": "ztpromociones-environment",
+  "name": "ZTPROMOCIONES Environment - Estructura Estandarizada",
+  "values": [
+    {
+      "key": "BASE_URL",
+      "value": "http://localhost:4004",
+      "description": "URL base del servidor backend CDS",
+      "enabled": true
+    },
+    {
+      "key": "LOGGED_USER",
+      "value": "jlopezm",
+      "description": "Usuario logueado en formato estándar (primera letra nombre + apellido paterno + primera letra segundo apellido)",
+      "enabled": true
+    },
+    {
+      "key": "DB_SERVER",
+      "value": "MongoDB",
+      "description": "Servidor de base de datos (MongoDB, HANA, AzureCosmos)",
+      "enabled": true
+    },
+    {
+      "key": "API_VERSION",
+      "value": "v1",
+      "description": "Versión de la API",
+      "enabled": true
+    },
+    {
+      "key": "CONTENT_TYPE",
+      "value": "application/json",
+      "description": "Tipo de contenido para las peticiones",
+      "enabled": true
+    },
+    {
+      "key": "TEST_PROMO_ID",
+      "value": "TEST_PROMO_001",
+      "description": "ID de promoción para pruebas",
+      "enabled": true
+    },
+    {
+      "key": "TEST_SKU_ID",
+      "value": "TEST_SKU_001", 
+      "description": "SKU ID para pruebas",
+      "enabled": true
+    },
+    {
+      "key": "TEST_LISTA_ID",
+      "value": "TEST_LISTA_001",
+      "description": "ID de lista para pruebas",
+      "enabled": true
+    },
+    {
+      "key": "DEFAULT_LIMIT",
+      "value": "50",
+      "description": "Límite por defecto para consultas",
+      "enabled": true
+    },
+    {
+      "key": "DEFAULT_OFFSET",
+      "value": "0",
+      "description": "Offset por defecto para paginación",
+      "enabled": true
+    }
+  ],
+  "_postman_variable_scope": "environment",
+  "_postman_exported_at": "2024-10-18T00:00:00.000Z",
+  "_postman_exported_using": "Postman CLI Generator"
+}
