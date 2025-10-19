@@ -1,0 +1,39 @@
+### Test AddMany Promociones - Con wrapper 'promociones'
+POST http://localhost:4004/api/ztpromociones/crudPromociones?ProcessType=AddMany&LoggedUser=lpaniaguag
+Content-Type: application/json
+
+{
+  "promociones": [
+    {
+      "IdPromoOK": "PROMO001",
+      "Titulo": "Promoción de Prueba 1",
+      "Descripcion": "Descuento especial",
+      "FechaIni": "2024-01-01",
+      "FechaFin": "2024-12-31",
+      "SKUID": "SKU001",
+      "IdListaOK": "LISTA001",
+      "Descuento%": 10.5
+    }
+  ]
+}
+
+### Test AddMany Promociones - Array directo
+POST http://localhost:4004/api/ztpromociones/crudPromociones?ProcessType=AddMany&LoggedUser=lpaniaguag
+Content-Type: application/json
+
+[
+  {
+    "IdPromoOK": "PROMO002",
+    "Titulo": "Promoción de Prueba 2",
+    "Descripcion": "Descuento directo",
+    "FechaIni": "2024-01-01",
+    "FechaFin": "2024-12-31",
+    "SKUID": "SKU002",
+    "IdListaOK": "LISTA001",
+    "Descuento%": 15.0
+  }
+]
+
+### Test GetFilters - Obtener promociones
+POST http://localhost:4004/api/ztpromociones/crudPromociones?ProcessType=GetFilters&LoggedUser=lpaniaguag
+Content-Type: application/json

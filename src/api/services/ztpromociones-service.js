@@ -10,7 +10,23 @@ const { saveWithAudit } = require('../../helpers/audit-timestap');
 // UTIL: Extraer payload del request
 // ============================================
 function getPayload(req) {
-  return req.data || req.req?.body || req.body || null;
+  // Intentar diferentes ubicaciones del payload
+  let payload = null;
+  
+  // 1. req.data (CAP estándar)
+  if (req.data && typeof req.data === 'object') {
+    payload = req.data;
+  }
+  // 2. req.req.body (HTTP directo)
+  else if (req.req && req.req.body && typeof req.req.body === 'object') {
+    payload = req.req.body;
+  }
+  // 3. req.body (alternativo)
+  else if (req.body && typeof req.body === 'object') {
+    payload = req.body;
+  }
+  
+  return payload;
 }
 
 // ============================================
@@ -288,12 +304,25 @@ async function AddManyPromocionesMethod(bitacora, params, body, req, dbServer) {
     
     switch (dbServer) {
       case 'MongoDB':
-        // Validar payload
-        if (!payload || !Array.isArray(payload.promociones)) {
+        // Validar payload - permitir tanto 'promociones' como directamente el array
+        let promocionesData;
+        
+        if (!payload) {
           throw new Error('Se requiere array promociones en el body');
         }
-
-        const promocionesData = payload.promociones;
+        
+        // Permitir tanto { promociones: [...] } como [...] directamente
+        if (Array.isArray(payload)) {
+          promocionesData = payload;
+        } else if (payload.promociones && Array.isArray(payload.promociones)) {
+          promocionesData = payload.promociones;
+        } else {
+          throw new Error('Se requiere array promociones en el body');
+        }
+        
+        if (promocionesData.length === 0) {
+          throw new Error('El array promociones no puede estar vacío');
+        }
 
         // Validar campos obligatorios
         const promocionesValidadas = promocionesData.map(promo => {
