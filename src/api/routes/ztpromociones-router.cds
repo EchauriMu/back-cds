@@ -22,7 +22,9 @@ service ZTPromocionesService @(path:'/api/ztpromociones') {
   
   @Core.Description: 'CRUD Promociones con bitácora'
   @Common.SideEffects.TargetEntities: [Promociones]
-  action crudPromociones()
+  action crudPromociones(
+    req: String
+  )
   returns array of Promociones;
 
   // ========================================

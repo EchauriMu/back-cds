@@ -17,16 +17,24 @@ class ZTPromocionesService extends cds.ApplicationService {
        */
       this.on('crudPromociones', async (req) => {
         try {
+          // Bypass CDS parameter validation by clearing req.data and using query/body directly
+          const originalData = req.data;
+          req.data = null; // Clear to avoid parameter validation
+          
           const ProcessType = req.req?.query?.ProcessType;
           
           // Debug: Log request structure for AddMany operations
           if (ProcessType === 'AddMany') {
-            console.log('[DEBUG] Request data:', JSON.stringify(req.data, null, 2));
+            console.log('[DEBUG] Request originalData:', JSON.stringify(originalData, null, 2));
             console.log('[DEBUG] Request body:', JSON.stringify(req.req?.body, null, 2));
+            console.log('[DEBUG] Request query:', JSON.stringify(req.req?.query, null, 2));
           }
           
           // Ejecutar servicio
           const result = await crudZTPromociones(req);
+
+          // Restore original data for response
+          req.data = originalData;
 
           // Establecer status HTTP
           if (!result.success && req.http?.res) {
