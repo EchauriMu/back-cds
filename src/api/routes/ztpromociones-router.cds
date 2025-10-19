@@ -22,7 +22,18 @@ service ZTPromocionesService @(path:'/api/ztpromociones') {
   
   @Core.Description: 'CRUD Promociones con bitácora'
   @Common.SideEffects.TargetEntities: [Promociones]
-  action crudPromociones()
+  action crudPromociones(
+    ProcessType: String,
+    LoggedUser: String,
+    DBServer: String,
+    IdPromoOK: String,
+    SKUID: String,
+    IdListaOK: String,
+    vigentes: String,
+    limit: Integer,
+    offset: Integer,
+    deleteType: String
+  )
   returns array of Promociones;
 
   // ========================================
@@ -51,7 +62,12 @@ service ZTPromocionesService @(path:'/api/ztpromociones') {
 
   @Core.Description: 'CRUD Legacy - DEPRECADO: Use crudPromociones'
   @path: 'promocionesCRUD'
-  action promocionesCRUD()
+  action promocionesCRUD(
+    procedure: String,
+    type: String,
+    DBServer: String,
+    LoggedUser: String
+  )
   returns array of Promociones;
 
 }
