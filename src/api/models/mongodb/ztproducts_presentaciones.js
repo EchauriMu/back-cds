@@ -1,5 +1,15 @@
 import mongoose from "mongoose";
 
+const ModificationSchema = new mongoose.Schema(
+  {
+    user: { type: String, required: true },
+    date: { type: Date, default: Date.now },
+    action: { type: String, enum: ["CREATE", "UPDATE", "DELETE"], required: true },
+    changes: { type: Object, default: {} }, // campos que cambiaron (nuevo valor)
+  },
+  { _id: false }
+);
+
 const ZTPRODUCTS_PRESENTACIONES = new mongoose.Schema(
   {
     IdPresentaOK: {
@@ -12,62 +22,73 @@ const ZTPRODUCTS_PRESENTACIONES = new mongoose.Schema(
       type: String,
       required: true,
       trim: true,
-      ref: "ZTPRODUCTS", // referencia a productos base
+      ref: "ZTPRODUCTS",
     },
     Descripcion: {
       type: String,
       required: true,
       trim: true,
     },
-    CostoIni: {
-      type: Number,
-      required: true,
-      default: 0,
-    },
-    CostoFin: {
-      type: Number,
-      required: true,
-      default: 0,
-    },
-    Precio: {
-      type: Number,
-      required: true,
-      default: 0,
-    },
-    Stock: {
-      type: Number,
-      required: true,
-      default: 0,
-    },
-    ACTIVED: {
-      type: Boolean,
-      default: true,
-    },
-    DELETED: {
-      type: Boolean,
-      default: false,
-    },
-    REGUSER: {
-      type: String,
-      required: true,
-    },
-    REGDATE: {
-      type: Date,
-      default: Date.now,
-    },
-    MODUSER: {
-      type: String,
-      default: null,
-    },
-    MODDATE: {
-      type: Date,
-      default: null,
-    },
+    CostoIni: { type: Number, required: true, default: 0 },
+    CostoFin: { type: Number, required: true, default: 0 },
+    Precio:   { type: Number, required: true, default: 0 },
+    Stock:    { type: Number, required: true, default: 0 },
+
+    ACTIVED:  { type: Boolean, default: true },
+    DELETED:  { type: Boolean, default: false },
+
+    REGUSER:  { type: String, required: true },
+    REGDATE:  { type: Date, default: Date.now },
+    MODUSER:  { type: String, default: null },
+    MODDATE:  { type: Date, default: null },
+
+    HISTORY: [ModificationSchema],
   },
   {
+
     timestamps: true,
   }
 );
+
+ZTPRODUCTS_PRESENTACIONES.pre("save", function (next) {
+  const doc = this;
+
+  const EXCLUDE = new Set([
+    "HISTORY",
+    "MODUSER",
+    "MODDATE",
+    "updatedAt",
+    "createdAt",
+    "__v",
+  ]);
+
+  if (doc.isNew) {
+    doc.HISTORY.push({
+      user: doc.REGUSER,        
+      action: "CREATE",
+      changes: doc.toObject(),   
+    });
+  } else {
+    
+    const modified = doc.modifiedPaths().reduce((acc, path) => {
+      if (!EXCLUDE.has(path)) {
+        acc[path] = doc.get(path);
+      }
+      return acc;
+    }, {});
+
+    if (Object.keys(modified).length > 0) {
+      doc.MODDATE = new Date(); 
+      doc.HISTORY.push({
+        user: doc.MODUSER || "system",
+        action: "UPDATE",
+        changes: modified,
+      });
+    }
+  }
+
+  next();
+});
 
 export const ZTProducts_Presentaciones = mongoose.model(
   "ZTPRODUCTS_PRESENTACIONES",
