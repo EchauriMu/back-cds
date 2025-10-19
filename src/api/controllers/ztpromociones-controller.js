@@ -19,6 +19,12 @@ class ZTPromocionesService extends cds.ApplicationService {
         try {
           const ProcessType = req.req?.query?.ProcessType;
           
+          // Debug: Log request structure for AddMany operations
+          if (ProcessType === 'AddMany') {
+            console.log('[DEBUG] Request data:', JSON.stringify(req.data, null, 2));
+            console.log('[DEBUG] Request body:', JSON.stringify(req.req?.body, null, 2));
+          }
+          
           // Ejecutar servicio
           const result = await crudZTPromociones(req);
 
