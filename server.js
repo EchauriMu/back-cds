@@ -24,6 +24,42 @@ module.exports = async (o) =>{
         app.use(express.json({limit: "50mb"}));
 
         app.use(cors());
+        
+        // ============================================
+        // RUTA DIRECTA PARA ZTPROMOCIONES (bypass CDS validation)
+        // ============================================
+        const { crudZTPromociones } = require('./src/api/services/ztpromociones-service');
+        
+        app.post('/api/ztpromociones/crudPromociones', async (req, res) => {
+          try {
+            // Crear objeto request compatible con CDS
+            const cdsRequest = {
+              data: req.body,
+              req: {
+                query: req.query,
+                body: req.body,
+                method: req.method,
+                headers: req.headers
+              }
+            };
+            
+            // Llamar al servicio directamente
+            const result = await crudZTPromociones(cdsRequest);
+            
+            // Configurar status HTTP según resultado
+            const statusCode = result.status || (result.success ? 200 : 500);
+            res.status(statusCode).json(result);
+            
+          } catch (error) {
+            console.error('[ZTPROMOCIONES DIRECT] Error:', error.message);
+            res.status(500).json({
+              success: false,
+              error: error.message,
+              stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
+            });
+          }
+        });
+        
         app.use(docEnvX.API_URL,router)
         // app.use('/api',router );
 
