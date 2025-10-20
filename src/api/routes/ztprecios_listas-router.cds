@@ -1,27 +1,50 @@
-/*using { mongodb as myur } from '../models/ztprecios_listas';
-
-@impl: 'src/api/controllers/ztprecios_listas-controller.js'
-service ZTPPreciosListasService @(path: '/api/ztprecios-listas') {
-
-  entity PreciosListas as projection on myur.ZTPRECIOS_LISTAS;
-
-  @Core.Description: 'CRUD de Listas de Precios'
-  @path: 'preciosListasCRUD'
-  action preciosListasCRUD(req: String) returns array of PreciosListas;
-
-}*/
-
 using { mongodb as myur } from '../models/ztprecios_listas';
 
 @impl: 'src/api/controllers/ztprecios_listas-controller.js'
-service ZTPreciosListasService @(path: '/api/ztprecios-listas') {
 
+service ZTPreciosListasService @(path:'/api/ztprecios-listas') {
+
+  // Entidad principal
   entity PreciosListas as projection on myur.ZTPRECIOS_LISTAS;
 
+  // CRUD de Listas de Precios
   @Core.Description: 'CRUD de Listas de Precios'
   @path: 'preciosListasCRUD'
   action preciosListasCRUD(
-    req: String
+    ProcessType: String,
+    IDLISTAOK: String,
+    IDINSTITUTOOK: String,
+    IDLISTABK: String,
+    DESLISTA: String,
+    FECHAEXPIRAINI: Date,
+    FECHAEXPIRAFIN: Date,
+    IDTIPOLISTAOK: String,
+    IDTIPOGENERALISTAOK: String,
+    IDTIPOFORMULAOK: String,
+    REGUSER: String,
+    ACTIVED: Boolean,
+    DELETED: Boolean
   ) returns array of PreciosListas;
-}
 
+  // Ejemplos de uso 
+  // GET ALL LISTAS
+  // POST /api/ztprecios-listas/preciosListasCRUD?ProcessType=GetAll
+
+  // GET ONE LISTA
+  // POST /api/ztprecios-listas/preciosListasCRUD?ProcessType=GetOne&IDLISTAOK=LISTA001
+
+  // CREATE LISTA
+  // POST /api/ztprecios-listas/preciosListasCRUD?ProcessType=AddOne
+
+  // UPDATE LISTA
+  // POST /api/ztprecios-listas/preciosListasCRUD?ProcessType=UpdateOne&IDLISTAOK=LISTA001
+
+  // DELETE LOGIC
+  // POST /api/ztprecios-listas/preciosListasCRUD?ProcessType=DeleteLogic&IDLISTAOK=LISTA001
+
+  // DELETE HARD
+  // POST /api/ztprecios-listas/preciosListasCRUD?ProcessType=DeleteHard&IDLISTAOK=LISTA001
+
+  // ACTIVATE LISTA
+  // POST /api/ztprecios-listas/preciosListasCRUD?ProcessType=ActivateOne&IDLISTAOK=LISTA001
+}
