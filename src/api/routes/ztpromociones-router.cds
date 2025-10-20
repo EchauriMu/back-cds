@@ -22,29 +22,7 @@ service ZTPromocionesService @(path:'/api/ztpromociones') {
   
   @Core.Description: 'CRUD Promociones con bitácora'
   @path: 'crudPromociones'
-  action crudPromociones(
-    ProcessType: String,
-    LoggedUser: String,
-    DBServer: String,
-    IdPromoOK: String,
-    Titulo: String,
-    Descripcion: String,
-    FechaIni: String,
-    FechaFin: String,
-    SKUID: String,
-    IdListaOK: String,
-    ![Descuento%]: Double,
-    REGUSER: String,
-    REGDATE: String,
-    MODUSER: String,
-    MODDATE: String,
-    ACTIVED: Boolean,
-    DELETED: Boolean,
-    vigentes: String,
-    limit: Integer,
-    offset: Integer,
-    deleteType: String
-  ) returns array of Promociones;
+  action crudPromociones() returns String;
 
   
   // GET FILTERS (genérico)
