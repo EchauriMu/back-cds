@@ -1,5 +1,16 @@
 const mongoose = require('mongoose');
 
+// Schema para registrar modificaciones (historial de auditoría)
+const ModificationSchema = new mongoose.Schema(
+  {
+    user: { type: String, required: true },
+    date: { type: Date, default: Date.now },
+    action: { type: String, enum: ["CREATE", "UPDATE", "DELETE"], required: true },
+    changes: { type: Object, default: {} }, // campos que cambiaron
+  },
+  { _id: false }
+);
+
 const ZTProductSchema = new mongoose.Schema({
   SKUID: { 
     type: String, 
@@ -51,9 +62,43 @@ const ZTProductSchema = new mongoose.Schema({
   DELETED: { 
     type: Boolean, 
     default: false 
-  }
+  },
+  HISTORY: [ModificationSchema]
 }, { 
   timestamps: true  // Maneja automáticamente createdAt y updatedAt
+});
+
+
+ZTProductSchema.pre("save", function (next) {
+  const doc = this;
+
+  if (doc.isNew) {
+    // Registro inicial
+    doc.HISTORY.push({
+      user: doc.REGUSER,
+      action: "CREATE",
+      changes: doc.toObject(),
+    });
+  } else {
+    // Actualización
+    const modifiedFields = doc.modifiedPaths().reduce((acc, path) => {
+      if (!["HISTORY", "MODUSER", "MODDATE", "updatedAt"].includes(path)) {
+        acc[path] = doc.get(path);
+      }
+      return acc;
+    }, {});
+
+    if (Object.keys(modifiedFields).length > 0) {
+      doc.MODDATE = new Date(); // actualizar MODDATE
+      doc.HISTORY.push({
+        user: doc.MODUSER || "system",
+        action: "UPDATE",
+        changes: modifiedFields,
+      });
+    }
+  }
+
+  next();
 });
 
 // Exportar el modelo
