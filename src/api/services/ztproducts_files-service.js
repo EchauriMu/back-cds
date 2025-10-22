@@ -23,14 +23,12 @@ async function ZTProductFilesUploadHandler(req, loggedUser) {
     if (!payload) {
       return { error: true, message: 'No se recibió payload. Verifica Content-Type: application/json' };
     }
-
     const { fileBase64, SKUID, FILETYPE, originalname, mimetype, ...rest } = payload;
 
     // Validación de campos requeridos
     if (!fileBase64 || !SKUID || !FILETYPE || !loggedUser) {
       return { error: true, message: 'Faltan campos requeridos: fileBase64, SKUID, FILETYPE, y el usuario logueado (LoggedUser).' };
     }
-
     // Convertir Base64 a Buffer
     let fileBuffer;
     try {
@@ -170,7 +168,7 @@ async function ZTProductFilesCRUD(req) {
     // 4. EJECUTAR OPERACIÓN SEGÚN PROCESSTYPE
     switch (ProcessType) {
       case 'GetAll':
-        bitacora = await GetAllMethod(bitacora, params, paramString, body, dbServer);
+        bitacora = await GetAllMethod(bitacora, req, params, paramString, body, dbServer);
         if (!bitacora.success) {
           bitacora.finalRes = true;
           return FAIL(bitacora);
@@ -186,7 +184,7 @@ async function ZTProductFilesCRUD(req) {
           bitacora.finalRes = true;
           return FAIL(bitacora);
         }
-        bitacora = await GetOneMethod(bitacora, params, fileid, dbServer);
+        bitacora = await GetOneMethod(bitacora, req, params, fileid, dbServer);
         if (!bitacora.success) {
           bitacora.finalRes = true;
           return FAIL(bitacora);
@@ -194,7 +192,7 @@ async function ZTProductFilesCRUD(req) {
         break;
         
       case 'AddOne':
-        bitacora = await AddOneMethod(bitacora, params, body, req, dbServer);
+        bitacora = await AddOneMethod(bitacora, req, params, body, dbServer);
         if (!bitacora.success) {
           bitacora.finalRes = true;
           return FAIL(bitacora);
@@ -210,7 +208,7 @@ async function ZTProductFilesCRUD(req) {
           bitacora.finalRes = true;
           return FAIL(bitacora);
         }
-        bitacora = await UpdateOneMethod(bitacora, params, fileid, req, LoggedUser, dbServer);
+        bitacora = await UpdateOneMethod(bitacora, req, params, fileid, LoggedUser, dbServer);
         if (!bitacora.success) {
           bitacora.finalRes = true;
           return FAIL(bitacora);
@@ -226,7 +224,7 @@ async function ZTProductFilesCRUD(req) {
           bitacora.finalRes = true;
           return FAIL(bitacora);
         }
-        bitacora = await DeleteLogicMethod(bitacora, params, fileid, LoggedUser, dbServer);
+        bitacora = await DeleteLogicMethod(bitacora, req, params, fileid, LoggedUser, dbServer);
         if (!bitacora.success) {
           bitacora.finalRes = true;
           return FAIL(bitacora);
@@ -242,7 +240,7 @@ async function ZTProductFilesCRUD(req) {
           bitacora.finalRes = true;
           return FAIL(bitacora);
         }
-        bitacora = await DeleteHardMethod(bitacora, params, fileid, dbServer);
+        bitacora = await DeleteHardMethod(bitacora, req, params, fileid, dbServer);
         if (!bitacora.success) {
           bitacora.finalRes = true;
           return FAIL(bitacora);
@@ -258,7 +256,7 @@ async function ZTProductFilesCRUD(req) {
           bitacora.finalRes = true;
           return FAIL(bitacora);
         }
-        bitacora = await ActivateOneMethod(bitacora, params, fileid, LoggedUser, dbServer);
+        bitacora = await ActivateOneMethod(bitacora, req, params, fileid, LoggedUser, dbServer);
         if (!bitacora.success) {
           bitacora.finalRes = true;
           return FAIL(bitacora);
@@ -275,36 +273,45 @@ async function ZTProductFilesCRUD(req) {
     }
     
     return OK(bitacora);
-    
-  } catch (error) {
-    // Si el error ya tiene finalRes = true, significa que fue manejado en un método local
-    if (bitacora.finalRes) {
-      return FAIL(bitacora);
-    }
-    
-    // Error no manejado - captura inesperada
-    data.process = 'Catch principal ZTProductFilesCRUD';
-    data.messageUSR = 'Ocurrió un error inesperado en el endpoint';
-    data.messageDEV = error.message;
-    data.stack = process.env.NODE_ENV === 'development' ? error.stack : undefined; // eslint-disable-line
-    bitacora = AddMSG(bitacora, data, 'FAIL', 500, true);
-    bitacora.finalRes = true;
-    
-    // TODO: Implementar registro en tabla de errores
-    // await logErrorToDatabase(error, bitacora);
-    
-    // TODO: Implementar notificación de error
-    // await notifyError(bitacora.loggedUser, error);
-    
+    //------utilizar este catch  para el documentos
+  }  catch (error) {
+    // 1. Configuración de error NO MANEJADO (solo se ejecuta si el error fue una excepción imprevista)
+    // Si bitacora.finalRes es false, significa que el error no fue procesado por un método interno.
+    if (!bitacora.finalRes) {
+        // Error no manejado - lo construimos como 500
+        data.process = 'Catch principal ZTProductFilesCRUD (Error Inesperado)';
+        data.messageUSR = 'Ocurrió un error inesperado en el endpoint';
+        data.messageDEV = error.message;
+        
+        // Se añade el mensaje de fallo con status 500 y se marca como finalRes=true
+        bitacora = AddMSG(bitacora, data, 'FAIL', 500, true);
+    } 
+    // Si bitacora.finalRes ya era true, saltamos el 'if' y usamos la bitácora existente (ej. un 404 de un método interno).
+
+    // 2. Notificación a SAP CAP (ÚNICA LLAMADA)
+    // Usamos la bitácora ya finalizada, ya sea que la construimos en el 'if' o vino de un método.
+    //basado en la logica estandar que nos eneseño el profe
+    //
+    req.error({
+        code: 'Internal-Server-Error',
+        status: bitacora.status || 500, // Usar el status final de la bitácora
+        message: bitacora.messageUSR,
+        target: bitacora.messageDEV,
+        numericSeverity: 1,
+        innererror: bitacora
+    });
+
+    // 3. Devolver la respuesta de fallo y finalizar el flujo
     return FAIL(bitacora);
-  }
+}
+
 }
 
 // ============================================
 // MÉTODOS LOCALES CON BITÁCORA
 // ============================================
 
-async function GetAllMethod(bitacora, params, paramString, body, dbServer) {
+async function GetAllMethod(bitacora, req, params, paramString, body, dbServer) {
   let data = DATA();
   
   // Configurar contexto de data
@@ -313,6 +320,7 @@ async function GetAllMethod(bitacora, params, paramString, body, dbServer) {
   data.loggedUser = params.LoggedUser || '';
   data.dbServer = dbServer;
   data.server = process.env.SERVER_NAME || ''; // eslint-disable-line
+  data.method = req.req?.method || 'No Especificado';
   data.api = '/api/ztproducts-files/productsFilesCRUD';
   data.queryString = paramString;
   
@@ -354,7 +362,7 @@ async function GetAllMethod(bitacora, params, paramString, body, dbServer) {
   }
 }
 
-async function GetOneMethod(bitacora, params, fileid, dbServer) {
+async function GetOneMethod(bitacora, req, params, fileid, dbServer) {
   let data = DATA();
   
   // Configurar contexto de data
@@ -363,6 +371,7 @@ async function GetOneMethod(bitacora, params, fileid, dbServer) {
   data.loggedUser = params.LoggedUser || '';
   data.dbServer = dbServer;
   data.server = process.env.SERVER_NAME || ''; // eslint-disable-line
+  data.method = req.req?.method || 'No Especificado';
   data.api = '/api/ztproducts-files/productsFilesCRUD';
   
   // Propagar en bitácora
@@ -400,7 +409,7 @@ async function GetOneMethod(bitacora, params, fileid, dbServer) {
   }
 }
 
-async function AddOneMethod(bitacora, params, body, req, dbServer) {
+async function AddOneMethod(bitacora, req, params, body, dbServer) {
   let data = DATA();
   
   data.process = 'Agregar archivo';
@@ -408,6 +417,7 @@ async function AddOneMethod(bitacora, params, body, req, dbServer) {
   data.loggedUser = params.LoggedUser || '';
   data.dbServer = dbServer;
   data.server = process.env.SERVER_NAME || ''; // eslint-disable-line
+  data.method = req.req?.method || 'No Especificado';
   data.api = '/api/ztproducts-files/productsFilesCRUD';
   
   bitacora.processType = params.ProcessType || '';
@@ -444,7 +454,7 @@ async function AddOneMethod(bitacora, params, body, req, dbServer) {
   }
 }
 
-async function UpdateOneMethod(bitacora, params, fileid, req, user, dbServer) {
+async function UpdateOneMethod(bitacora, req, params, fileid, user, dbServer) {
   let data = DATA();
   
   data.process = 'Actualizar archivo';
@@ -452,6 +462,7 @@ async function UpdateOneMethod(bitacora, params, fileid, req, user, dbServer) {
   data.loggedUser = params.LoggedUser || '';
   data.dbServer = dbServer;
   data.server = process.env.SERVER_NAME || ''; // eslint-disable-line
+  data.method = req.req?.method || 'No Especificado';
   data.api = '/api/ztproducts-files/productsFilesCRUD';
   
   bitacora.processType = params.ProcessType || '';
@@ -488,7 +499,7 @@ async function UpdateOneMethod(bitacora, params, fileid, req, user, dbServer) {
   }
 }
 
-async function DeleteLogicMethod(bitacora, params, fileid, user, dbServer) {
+async function DeleteLogicMethod(bitacora, req, params, fileid, user, dbServer) {
   let data = DATA();
   
   data.process = 'Borrado lógico de archivo';
@@ -496,6 +507,7 @@ async function DeleteLogicMethod(bitacora, params, fileid, user, dbServer) {
   data.loggedUser = params.LoggedUser || '';
   data.dbServer = dbServer;
   data.server = process.env.SERVER_NAME || ''; // eslint-disable-line
+  data.method = req.req?.method || 'No Especificado';
   data.api = '/api/ztproducts-files/productsFilesCRUD';
   
   bitacora.processType = params.ProcessType || '';
@@ -539,7 +551,7 @@ async function DeleteLogicMethod(bitacora, params, fileid, user, dbServer) {
   }
 }
 
-async function DeleteHardMethod(bitacora, params, fileid, dbServer) {
+async function DeleteHardMethod(bitacora, req, params, fileid, dbServer) {
   let data = DATA();
   
   data.process = 'Borrado permanente de archivo';
@@ -547,6 +559,7 @@ async function DeleteHardMethod(bitacora, params, fileid, dbServer) {
   data.loggedUser = params.LoggedUser || '';
   data.dbServer = dbServer;
   data.server = process.env.SERVER_NAME || ''; // eslint-disable-line
+  data.method = req.req?.method || 'No Especificado';
   data.api = '/api/ztproducts-files/productsFilesCRUD';
   
   bitacora.processType = params.ProcessType || '';
@@ -583,7 +596,7 @@ async function DeleteHardMethod(bitacora, params, fileid, dbServer) {
   }
 }
 
-async function ActivateOneMethod(bitacora, params, fileid, user, dbServer) {
+async function ActivateOneMethod(bitacora, req, params, fileid, user, dbServer) {
   let data = DATA();
   
   data.process = 'Activar archivo';
@@ -591,6 +604,7 @@ async function ActivateOneMethod(bitacora, params, fileid, user, dbServer) {
   data.loggedUser = params.LoggedUser || '';
   data.dbServer = dbServer;
   data.server = process.env.SERVER_NAME || ''; // eslint-disable-line
+  data.method = req.req?.method || 'No Especificado';
   data.api = '/api/ztproducts-files/productsFilesCRUD';
   
   bitacora.processType = params.ProcessType || '';
