@@ -88,21 +88,22 @@ async function ActivateOneZTPreciosItem(IdPrecioOK, user) {
 // ============================================
 // MÉTODOS con BITÁCORA (estilo amigo)
 // ============================================
-async function GetAllMethod(bitacora, params, paramString, body, dbServer) {
+async function GetAllMethod(bitacora, req, params, paramString, body, dbServer) {
   let data = DATA();
   data.process = 'Obtener todos los precios';
   data.processType = params.ProcessType || '';
   data.loggedUser = params.LoggedUser || '';
   data.dbServer = dbServer;
   data.server = process.env.SERVER_NAME || '';
+  data.method       = req.req?.method || 'No Especificado';
   data.api = '/api/ztprecios-items/preciosItemsCRUD';
   data.queryString = paramString;
 
-  Object.assign(bitacora, {
-    processType: data.processType,
-    loggedUser: data.loggedUser,
-    dbServer, server: data.server, process: data.process
-  });
+  bitacora.processType = data.processType;
+  bitacora.loggedUser  = data.loggedUser;
+  bitacora.dbServer    = dbServer;
+  bitacora.server      = data.server;
+  bitacora.process     = data.process;
 
   try {
     let docs;
@@ -138,11 +139,11 @@ async function GetOneMethod(bitacora, params, IdPrecioOK, dbServer) {
   data.server = process.env.SERVER_NAME || '';
   data.api = '/api/ztprecios-items/preciosItemsCRUD';
 
-  Object.assign(bitacora, {
-    processType: data.processType,
-    loggedUser: data.loggedUser,
-    dbServer, server: data.server, process: data.process
-  });
+  bitacora.processType = data.processType;
+  bitacora.loggedUser  = data.loggedUser;
+  bitacora.dbServer    = dbServer;
+  bitacora.server      = data.server;
+  bitacora.process     = data.process;
 
   try {
     let doc;
@@ -177,11 +178,11 @@ async function AddOneMethod(bitacora, params, body, req, dbServer) {
   data.server = process.env.SERVER_NAME || '';
   data.api = '/api/ztprecios-items/preciosItemsCRUD';
 
-  Object.assign(bitacora, {
-    processType: data.processType,
-    loggedUser: data.loggedUser,
-    dbServer, server: data.server, process: data.process
-  });
+  bitacora.processType = data.processType;
+  bitacora.loggedUser  = data.loggedUser;
+  bitacora.dbServer    = dbServer;
+  bitacora.server      = data.server;
+  bitacora.process     = data.process;
 
   try {
     let result;
@@ -196,6 +197,15 @@ async function AddOneMethod(bitacora, params, body, req, dbServer) {
     data.messageDEV = 'AddOne ejecutado sin errores';
     bitacora = AddMSG(bitacora, data, 'OK', 201, true);
     bitacora.success = true;
+
+    if (req?.http?.res) {
+      req.http.res.status(201);
+      const id = (result && (result.IdPrecioOK || result?.data?.IdPrecioOK)) || '';
+      if (id) {
+        // Ajusta el entity set si tu ruta difiere (por defecto 'Presentaciones')
+        req.http.res.set('Location', `/api/ztprecios-items/Precios('${id}')`);
+      }
+    }
     return bitacora;
 
   } catch (error) {
@@ -216,11 +226,11 @@ async function UpdateOneMethod(bitacora, params, IdPrecioOK, req, user, dbServer
   data.server = process.env.SERVER_NAME || '';
   data.api = '/api/ztprecios-items/preciosItemsCRUD';
 
-  Object.assign(bitacora, {
-    processType: data.processType,
-    loggedUser: data.loggedUser,
-    dbServer, server: data.server, process: data.process
-  });
+  bitacora.processType = data.processType;
+  bitacora.loggedUser  = data.loggedUser;
+  bitacora.dbServer    = dbServer;
+  bitacora.server      = data.server;
+  bitacora.process     = data.process;
 
   try {
     let result;
@@ -255,11 +265,11 @@ async function DeleteLogicMethod(bitacora, params, IdPrecioOK, user, dbServer) {
   data.server = process.env.SERVER_NAME || '';
   data.api = '/api/ztprecios-items/preciosItemsCRUD';
 
-  Object.assign(bitacora, {
-    processType: data.processType,
-    loggedUser: data.loggedUser,
-    dbServer, server: data.server, process: data.process
-  });
+  bitacora.processType = data.processType;
+  bitacora.loggedUser  = data.loggedUser;
+  bitacora.dbServer    = dbServer;
+  bitacora.server      = data.server;
+  bitacora.process     = data.process;
 
   try {
     let result;
@@ -300,11 +310,11 @@ async function DeleteHardMethod(bitacora, params, IdPrecioOK, dbServer) {
   data.server = process.env.SERVER_NAME || '';
   data.api = '/api/ztprecios-items/preciosItemsCRUD';
 
-  Object.assign(bitacora, {
-    processType: data.processType,
-    loggedUser: data.loggedUser,
-    dbServer, server: data.server, process: data.process
-  });
+  bitacora.processType = data.processType;
+  bitacora.loggedUser  = data.loggedUser;
+  bitacora.dbServer    = dbServer;
+  bitacora.server      = data.server;
+  bitacora.process     = data.process;
 
   try {
     let result;
@@ -339,11 +349,11 @@ async function ActivateOneMethod(bitacora, params, IdPrecioOK, user, dbServer) {
   data.server = process.env.SERVER_NAME || '';
   data.api = '/api/ztprecios-items/preciosItemsCRUD';
 
-  Object.assign(bitacora, {
-    processType: data.processType,
-    loggedUser: data.loggedUser,
-    dbServer, server: data.server, process: data.process
-  });
+  bitacora.processType = data.processType;
+  bitacora.loggedUser  = data.loggedUser;
+  bitacora.dbServer    = dbServer;
+  bitacora.server      = data.server;
+  bitacora.process     = data.process;
 
   try {
     let result;
@@ -371,6 +381,8 @@ async function ActivateOneMethod(bitacora, params, IdPrecioOK, user, dbServer) {
 
 // ============================================
 // ORQUESTADOR PRINCIPAL (CAP Action)
+//    ProcessType: GetAll | GetOne | AddOne | UpdateOne | DeleteLogic | DeleteHard | ActivateOne
+//    Params esperados: LoggedUser, DBServer (opcional), idpresentaok (para One/Update/Delete/Activate)
 // ============================================
 async function ZTPreciosItemsCRUD(req) {
   let bitacora = BITACORA();
@@ -400,19 +412,17 @@ async function ZTPreciosItemsCRUD(req) {
     }
 
     const dbServer = DBServer || 'MongoDB';
-    Object.assign(bitacora, {
-      processType: ProcessType,
-      loggedUser: LoggedUser,
-      dbServer,
-      queryString: paramString,
-      method: req.req?.method || 'UNKNOWN',
-      api: '/api/ztprecios-items/preciosItemsCRUD',
-      server: process.env.SERVER_NAME || 'No especificado' // eslint-disable-line
-    });
+    bitacora.processType = ProcessType;
+    bitacora.loggedUser  = LoggedUser;
+    bitacora.dbServer    = dbServer;
+    bitacora.queryString = paramString;
+    bitacora.method      = req.req?.method || 'UNKNOWN';
+    bitacora.api         = '/api/ztproducts-presentaciones/productsPresentacionesCRUD';
+    bitacora.server      = process.env.SERVER_NAME || 'No especificado'; // eslint-disable-line
 
     switch (ProcessType) {
       case 'GetAll':
-        bitacora = await GetAllMethod(bitacora, params, paramString, body, dbServer);
+        bitacora = await GetAllMethod(bitacora, req, params, paramString, body, dbServer);
         if (!bitacora.success) { bitacora.finalRes = true; return FAIL(bitacora); }
         break;
 
@@ -498,7 +508,7 @@ async function ZTPreciosItemsCRUD(req) {
     return OK(bitacora);
 
   } catch (error) {
-    if (bitacora.finalRes) return FAIL(bitacora);
+    if (bitacora.finalRes) {
     let data = DATA();
     data.process = 'Catch principal ZTPreciosItemsCRUD';
     data.messageUSR = 'Ocurrió un error inesperado en el endpoint';
@@ -506,8 +516,19 @@ async function ZTPreciosItemsCRUD(req) {
     data.stack = process.env.NODE_ENV === 'development' ? error.stack : undefined; // eslint-disable-line
     bitacora = AddMSG(bitacora, data, 'FAIL', 500, true);
     bitacora.finalRes = true;
+  }
+  req.error({
+      code: 'Internal-Server-Error',
+      status: bitacora.status || 500,
+      message: bitacora.messageUSR,
+      target: bitacora.messageDEV,
+      numericSeverity: 1,
+      innererror: bitacora
+    });
+
     return FAIL(bitacora);
   }
+
 }
 
 // ============================================
