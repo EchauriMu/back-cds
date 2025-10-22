@@ -93,7 +93,7 @@ async function ActivateOneZTProductsPresentacion(idpresentaok, user) {
 // ============================================
 // MÉTODOS LOCALES CON BITÁCORA (mismo estilo amigo)
 // ============================================
-async function GetAllMethod(bitacora, params, paramString, body, dbServer) {
+async function GetAllMethod(bitacora, req, params, paramString, body, dbServer) {
   let data = DATA();
 
   // contexto
@@ -102,6 +102,7 @@ async function GetAllMethod(bitacora, params, paramString, body, dbServer) {
   data.loggedUser   = params.LoggedUser || '';
   data.dbServer     = dbServer;
   data.server       = process.env.SERVER_NAME || '';
+  data.method       = req.req?.method || 'No Especificado';
   data.api          = '/api/ztproducts-presentaciones/productsPresentacionesCRUD';
   data.queryString  = paramString;
 
@@ -217,6 +218,17 @@ async function AddOneMethod(bitacora, params, body, req, dbServer) {
     data.messageDEV = 'AddOne ejecutado sin errores';
     bitacora = AddMSG(bitacora, data, 'OK', 201, true);
     bitacora.success = true;
+
+    // ✅ Setear HTTP 201 + Location desde el service (si hay http.res)
+    if (req?.http?.res) {
+      req.http.res.status(201);
+      const id = (result && (result.IdPresentaOK || result?.data?.IdPresentaOK)) || '';
+      if (id) {
+        // Ajusta el entity set si tu ruta difiere (por defecto 'Presentaciones')
+        req.http.res.set('Location', `/api/ztproducts-presentaciones/Presentaciones('${id}')`);
+      }
+    }
+
     return bitacora;
 
   } catch (error) {
@@ -457,7 +469,7 @@ async function ZTProductsPresentacionesCRUD(req) {
     // 4. ROUTING POR PROCESSTYPE
     switch (ProcessType) {
       case 'GetAll': {
-        bitacora = await GetAllMethod(bitacora, params, paramString, body, dbServer);
+        bitacora = await GetAllMethod(bitacora, req, params, paramString, body, dbServer);
         if (!bitacora.success) { bitacora.finalRes = true; return FAIL(bitacora); }
         break;
       }
@@ -551,15 +563,27 @@ async function ZTProductsPresentacionesCRUD(req) {
     return OK(bitacora);
 
   } catch (error) {
-    if (bitacora.finalRes) return FAIL(bitacora);
+    // Si ya venías con finalRes=true, respeta el status consolidado
+    if (!bitacora.finalRes) {
+      // Error no manejado -> consolida a 500 y cierra
+      let data = DATA();
+      data.process     = 'Catch principal ZTProductsPresentacionesCRUD (Error Inesperado)';
+      data.messageUSR  = 'Ocurrió un error inesperado en el endpoint';
+      data.messageDEV  = error.message;
+      data.stack       = process.env.NODE_ENV === 'development' ? error.stack : undefined; // eslint-disable-line
+      bitacora = AddMSG(bitacora, data, 'FAIL', 500, true);
+      bitacora.finalRes = true;
+    }
 
-    // Error no manejado
-    data.process     = 'Catch principal ZTProductsPresentacionesCRUD';
-    data.messageUSR  = 'Ocurrió un error inesperado en el endpoint';
-    data.messageDEV  = error.message;
-    data.stack       = process.env.NODE_ENV === 'development' ? error.stack : undefined; // eslint-disable-line
-    bitacora = AddMSG(bitacora, data, 'FAIL', 500, true);
-    bitacora.finalRes = true;
+    // ✅ Notificar a CAP una única vez con el status final de bitácora
+    req.error({
+      code: 'Internal-Server-Error',
+      status: bitacora.status || 500,
+      message: bitacora.messageUSR,
+      target: bitacora.messageDEV,
+      numericSeverity: 1,
+      innererror: bitacora
+    });
 
     return FAIL(bitacora);
   }
