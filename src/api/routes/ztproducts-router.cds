@@ -48,3 +48,4 @@ service ZTProductsService @(path:'/api/ztproducts') {
     // DELETE HARD
     // POST /api/ztproducts/crudProducts?ProcessType=delete&type=hard&skuid=PROD123
 }
+

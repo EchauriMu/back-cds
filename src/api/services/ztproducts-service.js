@@ -6,6 +6,95 @@ const ZTProduct = require('../models/mongodb/ztproducts');
 const {OK, FAIL, BITACORA, DATA, AddMSG} = require('../../middlewares/respPWA.handler');
 const { saveWithAudit } = require('../../helpers/audit-timestap');
 
+// ============================================
+// UTIL: OBTENER PAYLOAD DESDE CDS/EXPRESS
+// ============================================
+function getPayload(req) {
+  return req.data || req.req?.body || null;
+}
+
+// ============================================
+// CRUD BÁSICO (MONGO PURO) - Capa 1
+// ============================================
+async function GetAllZTProducts() {
+  // Por defecto excluimos borrados lógicos y productos inactivos
+  return await ZTProduct.find({ ACTIVED: true, DELETED: false }).lean();
+}
+
+async function GetOneZTProduct(skuid) {
+  if (!skuid) throw new Error('Falta parámetro SKUID');
+  const doc = await ZTProduct.findOne({ SKUID: skuid, ACTIVED: true, DELETED: false }).lean();
+  if (!doc) throw new Error('No se encontró el producto');
+  return doc;
+}
+
+async function AddOneZTProduct(payload, user) {
+  if (!payload) throw new Error('No se recibió payload. Verifica Content-Type: application/json');
+
+  const required = ['SKUID', 'DESSKU', 'IDUNIDADMEDIDA'];
+  const missing = required.filter((k) => payload[k] === undefined || payload[k] === null || payload[k] === '');
+  if (missing.length) throw new Error(`Faltan campos obligatorios: ${missing.join(', ')}`);
+
+  // Evitar duplicados
+  const exists = await ZTProduct.findOne({ SKUID: payload.SKUID }).lean();
+  if (exists) throw new Error('Ya existe un producto con ese SKUID');
+
+  // Defaults
+  const data = {
+    SKUID           : payload.SKUID,
+    DESSKU          : payload.DESSKU,
+    CATEGORIAS      : payload.CATEGORIAS || [],
+    IDUNIDADMEDIDA  : payload.IDUNIDADMEDIDA,
+    BARCODE         : payload.BARCODE || '',
+    INFOAD          : payload.INFOAD || '',
+    ACTIVED         : payload.ACTIVED ?? true,
+    DELETED         : payload.DELETED ?? false,
+    CREATED_AT      : new Date(),
+    UPDATED_AT      : new Date()
+  };
+
+  // Usa helper con auditoría (CREATE dispara pre('save') y llena HISTORY)
+  const created = await saveWithAudit(ZTProduct, {}, data, user, 'CREATE');
+  return created;
+}
+
+async function UpdateOneZTProduct(skuid, cambios, user) {
+  if (!skuid) throw new Error('Falta parámetro SKUID');
+  if (!cambios || Object.keys(cambios).length === 0) throw new Error('No se enviaron datos para actualizar');
+
+  const filter = { SKUID: skuid, ACTIVED: true, DELETED: false };
+  const updateData = {
+    ...cambios,
+    UPDATED_AT: new Date()
+  };
+  // saveWithAudit asigna MODUSER/MODDATE y triggerá pre('save') para HISTORY
+  const updated = await saveWithAudit(ZTProduct, filter, updateData, user, 'UPDATE');
+  return updated;
+}
+
+async function DeleteLogicZTProduct(skuid, user) {
+  if (!skuid) throw new Error('Falta parámetro SKUID');
+  const filter = { SKUID: skuid, ACTIVED: true, DELETED: false };
+  const data   = { ACTIVED: false, DELETED: true, DELETED_AT: new Date(), UPDATED_AT: new Date() };
+  const res = await saveWithAudit(ZTProduct, filter, data, user, 'UPDATE');
+  return res;
+}
+
+async function DeleteHardZTProduct(skuid) {
+  if (!skuid) throw new Error('Falta parámetro SKUID');
+  const eliminado = await ZTProduct.findOneAndDelete({ SKUID: skuid });
+  if (!eliminado) throw new Error('No se encontró el producto para eliminar');
+  return { mensaje: 'Producto eliminado permanentemente', SKUID: skuid };
+}
+
+async function ActivateOneZTProduct(skuid, user) {
+  if (!skuid) throw new Error('Falta parámetro SKUID');
+  const filter = { SKUID: skuid };
+  const data   = { ACTIVED: true, DELETED: false, UPDATED_AT: new Date() };
+  const res = await saveWithAudit(ZTProduct, filter, data, user, 'UPDATE');
+  return res;
+}
+
 //----------------------------------------
 //FIC: CRUD Products Service with Bitacora
 //----------------------------------------
@@ -110,7 +199,7 @@ async function crudZTProducts(req) {
           bitacora.finalRes = true;
           return FAIL(bitacora);
         }
-        bitacora = await DeleteProductMethod(bitacora, params, skuid, LoggedUser, dbServer);
+        bitacora = await DeleteProductMethod(bitacora, { ...params, paramString }, skuid, LoggedUser, dbServer);
         if (!bitacora.success) {
           bitacora.finalRes = true;
           return FAIL(bitacora);
@@ -126,7 +215,7 @@ async function crudZTProducts(req) {
           bitacora.finalRes = true;
           return FAIL(bitacora);
         }
-        bitacora = await DeleteProductMethod(bitacora, params, skuid, LoggedUser, dbServer);
+        bitacora = await DeleteProductMethod(bitacora, { ...params, paramString }, skuid, LoggedUser, dbServer);
         if (!bitacora.success) {
           bitacora.finalRes = true;
           return FAIL(bitacora);
@@ -177,6 +266,18 @@ async function crudZTProducts(req) {
     bitacora = AddMSG(bitacora, data, 'FAIL', 500, true);
     bitacora.finalRes = true;
     
+    // NOTIFICACIÓN ESTRUCTURADA A CAP
+    if (req?.error) {
+      req.error({
+        code: 'Internal-Server-Error',
+        status: bitacora.status || 500,
+        message: bitacora.messageUSR || data.messageUSR,
+        target: bitacora.messageDEV || data.messageDEV,
+        numericSeverity: 1,
+        innererror: bitacora
+      });
+    }
+    
     // TODO: Implementar registro en tabla de errores
     // await logErrorToDatabase(error, bitacora);
     
@@ -188,7 +289,7 @@ async function crudZTProducts(req) {
 }
 
 //####################################################################################
-//FIC: Methods for each operation with Bitacora
+//FIC: Methods for each operation with Bitacora - Capa 2
 //####################################################################################
 
 async function GetProductMethod(bitacora, params, paramString, body, dbServer) {
@@ -217,13 +318,13 @@ async function GetProductMethod(bitacora, params, paramString, body, dbServer) {
             bitacora.process = "Obtener todos los PRODUCTOS";
             data.process = "Consulta de todos los productos";
             data.method = "GET";
-            data.api = "/crud?ProcessType=GetAll";
+            data.api = "/api/ztproducts/crudProducts?ProcessType=GetAll";
             data.principal = true;
 
             let productos;
             switch (dbServer) {
                 case 'MongoDB':
-                    productos = await GetAllZTProduct();
+                    productos = await GetAllZTProducts();
                     break;
                 case 'HANA':
                     throw new Error('HANA no implementado aún para GetAll');
@@ -233,14 +334,14 @@ async function GetProductMethod(bitacora, params, paramString, body, dbServer) {
             
             data.dataRes = productos;
             data.messageUSR = `Se obtuvieron ${productos.length} productos correctamente`;
-            data.messageDEV = 'GetAllZTProduct ejecutado sin errores';
+            data.messageDEV = 'GetAllZTProducts ejecutado sin errores';
             bitacora = AddMSG(bitacora, data, 'OK', 200, true);
             
         } else if (processType === 'GetOne') {
             bitacora.process = "Obtener UN PRODUCTO";
             data.process = "Consulta de producto específico";
             data.method = "GET";
-            data.api = "/crud?ProcessType=GetOne";
+            data.api = "/api/ztproducts/crudProducts?ProcessType=GetOne";
             data.principal = true;
 
             const skuid = params.skuid || params.SKUID;
@@ -264,28 +365,27 @@ async function GetProductMethod(bitacora, params, paramString, body, dbServer) {
                     throw new Error(`DBServer no soportado: ${dbServer}`);
             }
             
-            if (!producto) {
-                data.messageUSR = "Producto no encontrado";
-                data.messageDEV = `Producto con SKUID ${skuid} no encontrado`;
-                bitacora = AddMSG(bitacora, data, 'FAIL', 404, true);
-                bitacora.success = false;
-                return bitacora;
-            } else {
-                data.dataRes = producto;
-                data.messageUSR = "Producto encontrado correctamente";
-                data.messageDEV = `Producto con SKUID ${skuid} encontrado`;
-                bitacora = AddMSG(bitacora, data, 'OK', 200, true);
-            }
+            data.dataRes = producto;
+            data.messageUSR = "Producto encontrado correctamente";
+            data.messageDEV = `Producto con SKUID ${skuid} encontrado`;
+            bitacora = AddMSG(bitacora, data, 'OK', 200, true);
         }
         
         bitacora.success = true;
         return bitacora;
         
     } catch (error) {
-        data.messageUSR = 'Error al obtener el/los producto(s)';
-        data.messageDEV = error.message;
+        // MANEJO ESPECÍFICO DE ERRORES 404 vs 500
+        if (error.message.includes('No se encontró') || error.message.includes('no encontrado')) {
+            data.messageUSR = 'Producto no encontrado';
+            data.messageDEV = error.message;
+            bitacora = AddMSG(bitacora, data, 'FAIL', 404, true);
+        } else {
+            data.messageUSR = 'Error al obtener el/los producto(s)';
+            data.messageDEV = error.message;
+            bitacora = AddMSG(bitacora, data, 'FAIL', 500, true);
+        }
         data.stack = process.env.NODE_ENV === 'development' ? error.stack : undefined; // eslint-disable-line
-        bitacora = AddMSG(bitacora, data, 'FAIL', 500, true);
         bitacora.success = false;
         return bitacora;
     }
@@ -303,6 +403,7 @@ async function AddProductMethod(bitacora, params, paramString, body, req, dbServ
     data.api = '/api/ztproducts/crudProducts';
     data.method = "POST";
     data.principal = true;
+    data.queryString = paramString;
     
     // Propagar en bitácora
     bitacora.processType = params.ProcessType || '';
@@ -310,19 +411,14 @@ async function AddProductMethod(bitacora, params, paramString, body, req, dbServ
     bitacora.dbServer = dbServer;
     bitacora.server = process.env.SERVER_NAME || ''; // eslint-disable-line
     bitacora.process = 'Agregar producto';
+    bitacora.api = '/api/ztproducts/crudProducts';
+    bitacora.queryString = paramString;
     
     try {
         let result;
         switch (dbServer) {
             case 'MongoDB':
-                // Simulate req object for CreateZTProduct
-                const mockReq = {
-                    req: {
-                        data: body || {},
-                        body: body || {}
-                    }
-                };
-                result = await CreateZTProduct(mockReq, params.LoggedUser);
+                result = await AddOneZTProduct(getPayload(req), params.LoggedUser);
                 break;
             case 'HANA':
                 throw new Error('HANA no implementado aún para AddOne');
@@ -332,113 +428,107 @@ async function AddProductMethod(bitacora, params, paramString, body, req, dbServ
         
         data.dataRes = result;
         data.messageUSR = 'Producto creado exitosamente';
-        data.messageDEV = 'CreateZTProduct ejecutado sin errores';
+        data.messageDEV = 'AddOneZTProduct ejecutado sin errores';
         bitacora = AddMSG(bitacora, data, 'OK', 201, true);
         bitacora.success = true;
+        
+        if (req?.http?.res) {
+            req.http.res.status(201);
+            const id = (result && (result.SKUID)) || '';
+            if (id) {
+                req.http.res.set('Location', `/api/ztproducts/Products('${id}')`);
+            }
+        }
+        
         return bitacora;
         
     } catch (error) {
-        data.messageUSR = 'Error al crear el producto';
-        data.messageDEV = error.message;
-        bitacora = AddMSG(bitacora, data, 'FAIL', 500, true);
+        // MANEJO ESPECÍFICO DE ERRORES
+        if (error.message.includes('Faltan campos') || error.message.includes('Ya existe')) {
+            data.messageUSR = 'Error al crear el producto - datos no válidos';
+            data.messageDEV = error.message;
+            bitacora = AddMSG(bitacora, data, 'FAIL', 400, true);
+        } else {
+            data.messageUSR = 'Error al crear el producto';
+            data.messageDEV = error.message;
+            bitacora = AddMSG(bitacora, data, 'FAIL', 500, true);
+        }
         bitacora.success = false;
         return bitacora;
     }
 }
 
-async function UpdateProductMethod(bitacora, params, paramString, body) {
+async function UpdateProductMethod(bitacora, params, paramString, body, req, user, dbServer) {
     let data = DATA();
     
-    // Configurar contexto base de data
+    // Configurar contexto de data
+    data.process = 'Actualizar producto';
     data.processType = params.ProcessType || '';
     data.loggedUser = params.LoggedUser || '';
-    data.dbServer = params.DBServer || 'MongoDB';
+    data.dbServer = dbServer;
     data.server = process.env.SERVER_NAME || ''; // eslint-disable-line
     data.api = '/api/ztproducts/crudProducts';
+    data.method = "PUT";
+    data.principal = true;
+    data.queryString = paramString;
+    
+    // Propagar en bitácora
+    bitacora.processType = params.ProcessType || '';
+    bitacora.loggedUser = params.LoggedUser || '';
+    bitacora.dbServer = dbServer;
+    bitacora.server = process.env.SERVER_NAME || ''; // eslint-disable-line
+    bitacora.process = 'Actualizar producto';
+    bitacora.api = '/api/ztproducts/crudProducts';
+    bitacora.queryString = paramString;
     
     try {
-        const operation = params.operation || params.type || 'update';
+        let result;
         const skuid = params.skuid || params.SKUID;
+        const isActivate = params.operation === 'activate' || params.type === 'activate';
         
-        if (!skuid) {
-            data.status = 400;
-            data.messageDEV = "SKUID es requerido para actualizar/activar un producto";
-            data.messageUSR = "ID de producto requerido";
-            data.dataRes = null;
-            bitacora = AddMSG(bitacora, data, "FAIL");
-            return bitacora;
-        }
-
-        if (operation === 'activate') {
-            //FIC: Log configuration for ACTIVATE
-            bitacora.process = "Activar UN PRODUCTO";
-            data.method = "PUT";
-            data.api = "/crud?ProcessType=put&operation=activate";
-            data.process = "Activación de producto";
-            data.principal = true;
-
-            // Call the original function - CON AUDITORÍA
-            const resultado = await ActivateZTProduct(skuid, params.LoggedUser);
-            
-            if (resultado.error) {
-                data.status = 404;
-                data.messageUSR = resultado.message;
-                data.messageDEV = `Error al activar producto con SKUID ${skuid}`;
-                data.dataRes = null;
-                bitacora = AddMSG(bitacora, data, "FAIL");
-                bitacora.success = false;
-            } else {
-                data.status = 200;
-                data.messageUSR = "Producto activado exitosamente";
-                data.messageDEV = `Producto con SKUID ${skuid} activado correctamente`;
-                // Solo pasar datos serializables y limpios para evitar referencias circulares
-                data.dataRes = {
-                    success: resultado.success,
-                    message: resultado.message,
-                    SKUID: resultado.data?.SKUID || skuid
-                };
-                bitacora = AddMSG(bitacora, data, "OK", 200, true);
-                bitacora.success = true;
-            }
-            
-        } else {
-            //FIC: Log configuration for UPDATE
-            bitacora.process = "Actualizar UN PRODUCTO";
-            data.method = "PUT";
-            data.api = "/crud?ProcessType=put";
-            data.process = "Actualización de producto";
-            data.principal = true;
-
-            // Simulate req object for UpdateZTProduct
-            const mockReq = {
-                req: {
-                    data: { skuid, ...body },
-                    body: body || {}
+        switch (dbServer) {
+            case 'MongoDB':
+                if (isActivate) {
+                    // Usar función de activación
+                    result = await ActivateOneZTProduct(skuid);
+                } else {
+                    // Usar función de actualización
+                    result = await UpdateOneZTProduct(
+                        skuid,
+                        getPayload(req),
+                        user
+                    );
                 }
-            };
-
-            // Call the original function - CON AUDITORÍA
-            const resultado = await UpdateZTProduct(mockReq, skuid, params.LoggedUser);
-            
-            data.status = 200;
-            data.messageUSR = "Producto actualizado exitosamente";
-            data.messageDEV = `Producto con SKUID ${skuid} actualizado`;
-            data.dataRes = resultado;
-            
-            bitacora = AddMSG(bitacora, data, "OK", 200, true);
-            bitacora.success = true;
+                break;
+            case 'HANA':
+                throw new Error('HANA no implementado aún para UpdateOne');
+            default:
+                throw new Error(`DBServer no soportado: ${dbServer}`);
         }
         
-        bitacora.success = bitacora.success !== false; // Asegurar que tenga valor
+        data.dataRes = result;
+        data.messageUSR = isActivate ? 'Producto activado exitosamente' : 'Producto actualizado exitosamente';
+        data.messageDEV = isActivate ? 'ActivateOneZTProduct ejecutado sin errores' : 'UpdateOneZTProduct ejecutado sin errores';
+        bitacora = AddMSG(bitacora, data, 'OK', 200, true);
+        bitacora.success = true;
+        
         return bitacora;
         
     } catch (error) {
-        data.status = 500;
-        data.messageDEV = error.message;
-        data.messageUSR = "Error al actualizar/activar el producto";
-        data.dataRes = null;
-        
-        bitacora = AddMSG(bitacora, data, "FAIL");
+        // MANEJO ESPECÍFICO DE ERRORES
+        if (error.message.includes('No se encontró') || error.message.includes('no encontrado')) {
+            data.messageUSR = 'Error al actualizar el producto - producto no encontrado';
+            data.messageDEV = error.message;
+            bitacora = AddMSG(bitacora, data, 'FAIL', 404, true);
+        } else if (error.message.includes('Faltan campos') || error.message.includes('no válido')) {
+            data.messageUSR = 'Error al actualizar el producto - datos no válidos';
+            data.messageDEV = error.message;
+            bitacora = AddMSG(bitacora, data, 'FAIL', 400, true);
+        } else {
+            data.messageUSR = 'Error al actualizar el producto';
+            data.messageDEV = error.message;
+            bitacora = AddMSG(bitacora, data, 'FAIL', 500, true);
+        }
         bitacora.success = false;
         return bitacora;
     }
@@ -454,6 +544,9 @@ async function DeleteProductMethod(bitacora, params, skuid, user, dbServer) {
     data.dbServer = dbServer;
     data.server = process.env.SERVER_NAME || ''; // eslint-disable-line
     data.api = '/api/ztproducts/crudProducts';
+    data.method = "DELETE";
+    data.principal = true;
+    data.queryString = params.paramString || '';
     
     // Propagar en bitácora
     bitacora.processType = params.ProcessType || '';
@@ -461,425 +554,61 @@ async function DeleteProductMethod(bitacora, params, skuid, user, dbServer) {
     bitacora.dbServer = dbServer;
     bitacora.server = process.env.SERVER_NAME || ''; // eslint-disable-line
     bitacora.process = 'Eliminar producto';
+    bitacora.api = '/api/ztproducts/crudProducts';
+    bitacora.queryString = params.paramString || '';
     
     try {
-        const processType = params.ProcessType;
+        let result;
+        const isHardDelete = params.ProcessType === 'DeleteHard';
         
-        if (processType === 'DeleteLogic') {
-            //FIC: Log configuration for SOFT DELETE
-            bitacora.process = "Eliminar UN PRODUCTO";
-            data.method = "DELETE";
-            data.api = "/crud?ProcessType=delete&type=soft";
-            data.process = "Eliminación lógica de producto";
-            data.principal = true;
-
-            // Call the original function (logic delete) - CON AUDITORÍA
-            const resultado = await DeleteZTProductLogic(skuid, user);
-            
-            data.status = 200;
-            data.messageUSR = "Producto eliminado exitosamente";
-            data.messageDEV = `Producto con SKUID ${skuid} eliminado lógicamente`;
-            // Solo pasar datos serializables y limpios para evitar referencias circulares
-            data.dataRes = {
-                success: resultado.success,
-                message: resultado.message,
-                SKUID: resultado.data?.SKUID || skuid
-            };
-            
-            bitacora = AddMSG(bitacora, data, "OK", 200, true);
-            bitacora.success = true;
-            
-        } else if (processType === 'DeleteHard') {
-            //FIC: Log configuration for HARD DELETE
-            bitacora.process = "Eliminar FÍSICAMENTE UN PRODUCTO";
-            data.method = "DELETE";
-            data.api = "/crud?ProcessType=delete&type=hard";
-            data.process = "Eliminación física de producto";
-            data.principal = true;
-
-            // Call the original function (hard delete)
-            const resultado = await DeleteZTProductHard(skuid);
-            
-            if (!resultado) {
-                data.status = 404;
-                data.messageUSR = "Producto no encontrado para eliminación física";
-                data.messageDEV = `Producto con SKUID ${skuid} no encontrado`;
-                data.dataRes = null;
-                bitacora = AddMSG(bitacora, data, "FAIL");
-                bitacora.success = false;
-            } else {
-                data.status = 200;
-                data.messageUSR = "Producto eliminado físicamente";
-                data.messageDEV = `Producto con SKUID ${skuid} eliminado físicamente`;
-                // Solo pasar datos serializables y limpios para evitar referencias circulares
-                data.dataRes = {
-                    success: resultado.success,
-                    message: resultado.message,
-                    SKUID: resultado.data?.SKUID || skuid
-                };
-                bitacora = AddMSG(bitacora, data, "OK", 200, true);
-                bitacora.success = true;
-            }
+        switch (dbServer) {
+            case 'MongoDB':
+                if (isHardDelete) {
+                    // Usar función de eliminación física
+                    result = await DeleteHardZTProduct(skuid);
+                } else {
+                    // Usar función de eliminación lógica
+                    result = await DeleteLogicZTProduct(skuid, user);
+                }
+                break;
+            case 'HANA':
+                throw new Error('HANA no implementado aún para Delete');
+            default:
+                throw new Error(`DBServer no soportado: ${dbServer}`);
         }
         
-        bitacora.success = bitacora.success !== false; // Asegurar que tenga valor
+        data.dataRes = result;
+        data.messageUSR = isHardDelete ? 'Producto eliminado físicamente' : 'Producto eliminado lógicamente';
+        data.messageDEV = isHardDelete ? 'DeleteHardZTProduct ejecutado sin errores' : 'DeleteLogicZTProduct ejecutado sin errores';
+        bitacora = AddMSG(bitacora, data, 'OK', 200, true);
+        bitacora.success = true;
+        
         return bitacora;
         
     } catch (error) {
-        data.status = 500;
-        data.messageDEV = error.message;
-        data.messageUSR = "Error al eliminar el producto";
-        data.dataRes = null;
-        
-        bitacora = AddMSG(bitacora, data, "FAIL");
+        // MANEJO ESPECÍFICO DE ERRORES
+        if (error.message.includes('No se encontró') || error.message.includes('no encontrado')) {
+            data.messageUSR = 'Error al eliminar el producto - producto no encontrado';
+            data.messageDEV = error.message;
+            bitacora = AddMSG(bitacora, data, 'FAIL', 404, true);
+        } else {
+            data.messageUSR = 'Error al eliminar el producto';
+            data.messageDEV = error.message;
+            bitacora = AddMSG(bitacora, data, 'FAIL', 500, true);
+        }
         bitacora.success = false;
         return bitacora;
     }
 }
 
-//####################################################################################
-//####################################################################################
-//####################################################################################
-//####################################################################################
-
-// GET ALL PRODUCTS
-async function GetAllZTProduct() {
-  try {
-    const productos = await ZTProduct.find({ ACTIVED: true, DELETED: false }).lean();
-    console.log('[ZTProducts] Productos encontrados:', productos.length);
-    return productos;
-  } catch (error) {
-    console.error('[ZTProducts] Error obteniendo productos:', error.message);
-    throw error;
-  }
-}
-
-// GET ONE PRODUCT BY SKUID
-async function GetOneZTProduct(skuid) {
-  try {
-    console.log('[ZTProducts] Buscando producto por SKUID:', skuid);
-    const producto = await ZTProduct.findOne({ SKUID: skuid, ACTIVED: true, DELETED: false }).lean();
-    
-    if (!producto) {
-      console.log('[ZTProducts] No se encontró el producto en la base de datos.');
-      return null;
-    }
-    
-    console.log('[ZTProducts] Producto encontrado:', producto);
-    return producto;
-  } catch (error) {
-    console.error('[ZTProducts] Error buscando producto:', error.message);
-    throw error;
-  }
-}
-
-// CREATE PRODUCT - CON AUDITORÍA
-async function CreateZTProduct(req, user) {
-  try {
-    
-    // Obtener datos de diferentes posibles ubicaciones
-    let data = req.req.data || req.data || {};
-    
-    // Remover el campo 'procedure' si existe en los datos
-    if (data.procedure) {
-      delete data.procedure;
-    }
-    
-    console.log('[ZTProducts] Datos finales para crear:', data);
-    
-    // Validar que tengamos los campos mínimos requeridos
-    if (!data.SKUID || !data.DESSKU || !data.IDUNIDADMEDIDA) {
-      const error = 'Faltan campos requeridos: SKUID, DESSKU, IDUNIDADMEDIDA';
-      console.log('[ZTProducts]', error);
-      return { error: true, message: error };
-    }
-    
-    if (!user) {
-      const error = 'Usuario requerido para auditoría';
-      console.log('[ZTProducts]', error);
-      return { error: true, message: error };
-    }
-    
-    // Verificar que el SKUID no exista ya
-    const productoExistente = await ZTProduct.findOne({ SKUID: data.SKUID }).lean();
-    if (productoExistente) {
-      console.log('[ZTProducts] El producto ya existe');
-      return { error: true, message: 'Ya existe un producto con ese SKUID' };
-    }
-    
-    // Usar saveWithAudit para trazabilidad automática
-    const filter = {}; // No necesario para CREATE
-    const productData = {
-      ...data,
-      ACTIVED: true,
-      DELETED: false,
-      CREATED_AT: new Date(),
-      UPDATED_AT: new Date()
-    };
-    const action = 'CREATE';
-    
-    const productoGuardado = await saveWithAudit(ZTProduct, filter, productData, user, action);
-    console.log('[ZTProducts] Producto creado exitosamente con auditoría');
-    
-    // Retornar objeto limpio para evitar errores de CDS
-    return {
-      success: true,
-      message: 'Producto creado exitosamente',
-      data: {
-        SKUID: productoGuardado.SKUID,
-        DESSKU: productoGuardado.DESSKU,
-        IDUNIDADMEDIDA: productoGuardado.IDUNIDADMEDIDA,
-        REGUSER: productoGuardado.REGUSER,
-        REGDATE: productoGuardado.REGDATE,
-        ACTIVED: productoGuardado.ACTIVED,
-        DELETED: productoGuardado.DELETED,
-        CREATED_AT: productoGuardado.CREATED_AT
-      }
-    };
-  } catch (error) {
-    console.error('[ZTProducts] Error creando producto:', error.message);
-    if (error.name === 'ValidationError') {
-      return { error: true, message: error.message };
-    }
-    throw error;
-  }
-}
-
-// UPDATE PRODUCT - CON AUDITORÍA
-async function UpdateZTProduct(req, skuid, user) {
-  try {
-    let data = req.req.data || req.data || {};
-    
-    // Si no hay datos, devolver error
-    if (!data || Object.keys(data).length === 0) {
-      return { error: true, message: 'No se recibieron datos para actualizar' };
-    }
-    
-    if (!user) {
-      return { error: true, message: 'Usuario requerido para auditoría' };
-    }
-    
-    console.log('[ZTProducts] Actualizando producto con auditoría...');
-    
-    // Usar saveWithAudit para trazabilidad automática
-    const filter = { SKUID: skuid, ACTIVED: true, DELETED: false };
-    const updateData = { 
-      ...data,
-      UPDATED_AT: new Date()
-    };
-    const action = 'UPDATE';
-    
-    const productoActualizado = await saveWithAudit(ZTProduct, filter, updateData, user, action);
-    
-    console.log('[ZTProducts] Producto actualizado exitosamente con auditoría');
-    return {
-      success: true,
-      message: 'Producto actualizado exitosamente',
-      data: {
-        SKUID: productoActualizado.SKUID,
-        DESSKU: productoActualizado.DESSKU,
-        IDUNIDADMEDIDA: productoActualizado.IDUNIDADMEDIDA,
-        MODUSER: productoActualizado.MODUSER,
-        MODDATE: productoActualizado.MODDATE,
-        UPDATED_AT: productoActualizado.UPDATED_AT
-      }
-    };
-  } catch (error) {
-    console.error('[ZTProducts] Error actualizando producto:', error.message);
-    
-    // Si es error de "no encontrado", retornar mensaje específico
-    if (error.message.includes('Documento no encontrado')) {
-      return { error: true, message: 'Producto no encontrado para actualizar' };
-    }
-    
-    throw error;
-  }
-}
-
-// DELETE LOGIC (SOFT DELETE) - CON AUDITORÍA
-async function DeleteZTProductLogic(skuid, user) {
-  try {
-    console.log('[ZTProducts] Eliminación lógica del producto SKUID:', skuid);
-    
-    // Usar saveWithAudit para trazabilidad automática
-    const filter = { SKUID: skuid, ACTIVED: true, DELETED: false };
-    const data = { 
-      DELETED: true,
-      ACTIVED: false,
-      DELETED_AT: new Date(),
-      UPDATED_AT: new Date()
-    };
-    const action = 'UPDATE';
-    
-    const productoEliminado = await saveWithAudit(ZTProduct, filter, data, user, action);
-    
-    console.log('[ZTProducts] Producto eliminado lógicamente con auditoría');
-    return {
-      success: true,
-      message: 'Producto eliminado lógicamente',
-      data: {
-        SKUID: productoEliminado.SKUID,
-        DESSKU: productoEliminado.DESSKU,
-        ACTIVED: productoEliminado.ACTIVED,
-        DELETED: productoEliminado.DELETED,
-        MODUSER: productoEliminado.MODUSER,
-        MODDATE: productoEliminado.MODDATE
-      }
-    };
-  } catch (error) {
-    console.error('[ZTProducts] Error en eliminación lógica:', error.message);
-    
-    // Si es error de "no encontrado", retornar mensaje específico
-    if (error.message.includes('Documento no encontrado')) {
-      return { error: true, message: 'Producto no encontrado o ya eliminado' };
-    }
-    
-    throw error;
-  }
-}
-
-// DELETE HARD (PHYSICAL DELETE)
-async function DeleteZTProductHard(skuid) {
-  try {
-    console.log('[ZTProducts] Eliminación física del producto SKUID:', skuid);
-    
-    const productoEliminado = await ZTProduct.findOneAndDelete({ SKUID: skuid });
-    
-    if (!productoEliminado) {
-      console.log('[ZTProducts] No se encontró el producto para eliminar');
-      return null;
-    }
-    
-    console.log('[ZTProducts] Producto eliminado físicamente exitosamente');
-    
-    // Crear objeto limpio INMEDIATAMENTE para evitar referencias circulares
-    const resultado = {
-      success: true,
-      message: 'Producto eliminado físicamente',
-      data: {
-        SKUID: String(productoEliminado.SKUID || ''),
-        DESSKU: String(productoEliminado.DESSKU || ''),
-        IDUNIDADMEDIDA: String(productoEliminado.IDUNIDADMEDIDA || ''),
-        ACTIVED: Boolean(productoEliminado.ACTIVED),
-        DELETED: Boolean(productoEliminado.DELETED)
-      }
-    };
-    
-    console.log('[ZTProducts] Objeto limpio creado:', resultado);
-    return resultado;
-  } catch (error) {
-    console.error('[ZTProducts] Error en eliminación física:', error.message);
-    throw error;
-  }
-}
-
-// ACTIVATE PRODUCT - CON AUDITORÍA
-async function ActivateZTProduct(skuid, user) {
-  try {
-    console.log('[ZTProducts] Activando producto SKUID:', skuid);
-    
-    // Usar saveWithAudit para trazabilidad automática
-    const filter = { SKUID: skuid };
-    const data = { 
-      ACTIVED: true,
-      DELETED: false,
-      UPDATED_AT: new Date()
-    };
-    const action = 'UPDATE';
-    
-    const productoActivado = await saveWithAudit(ZTProduct, filter, data, user, action);
-    
-    console.log('[ZTProducts] Producto activado exitosamente con auditoría');
-    // Retornar objeto limpio sin metadatos de MongoDB
-    return {
-      success: true,
-      message: 'Producto activado exitosamente',
-      data: {
-        SKUID: productoActivado.SKUID,
-        DESSKU: productoActivado.DESSKU,
-        ACTIVED: productoActivado.ACTIVED,
-        DELETED: productoActivado.DELETED,
-        MODUSER: productoActivado.MODUSER,
-        MODDATE: productoActivado.MODDATE
-      }
-    };
-  } catch (error) {
-    console.error('[ZTProducts] Error activando producto:', error.message);
-    
-    // Si es error de "no encontrado", retornar mensaje específico
-    if (error.message.includes('Documento no encontrado')) {
-      return { error: true, message: 'Producto no encontrado' };
-    }
-    
-    throw error;
-  }
-} 
-
-
-// async function ZTProductCRUD(req) {
-//   try {
-//     const { procedure, type, skuid } = req.req.query;
-//     let res;
-    
-//     switch (procedure) {
-//       case 'get':
-//         switch (type) {
-//           case 'all':
-//             res = await GetAllZTProduct();
-//             break;
-//           case 'one':
-//             res = await GetOneZTProduct(skuid);
-//             break;
-//           default:
-//             throw new Error('Coloca un tipo de búsqueda válido (all o one)');
-//         }
-//         break;
-        
-//       case 'post':
-//         res = await CreateZTProduct(req);
-//         break;
-        
-//       case 'put':
-//         res = await UpdateZTProduct(req, skuid);
-//         break;
-        
-//       case 'delete':
-//         switch (type) {
-//           case 'logic':
-//             res = await DeleteZTProductLogic(skuid);
-//             break;
-//           case 'hard':
-//             res = await DeleteZTProductHard(skuid);
-//             break;
-//           default:
-//             throw new Error('Tipo de borrado inválido (logic o hard)');
-//         }
-//         break;
-        
-//       case 'activate':
-//         res = await ActivateZTProduct(skuid);
-//         break;
-        
-//       default:
-//         throw new Error('Parámetros inválidos o incompletos');
-//     }
-    
-//     return res;
-//   } catch (error) {
-//     console.error('Error en ZTProductCRUD:', error);
-//     return { error: true, message: error.message };
-//   }
-// }
-
 
 module.exports = {
-  GetAllZTProduct,
-  GetOneZTProduct,
-  CreateZTProduct,
-  UpdateZTProduct,
-  DeleteZTProductLogic,
-  DeleteZTProductHard,
-  ActivateZTProduct,
-  // ZTProductCRUD,
-  crudZTProducts
+    crudZTProducts,
+    GetAllZTProducts,
+    GetOneZTProduct,
+    AddOneZTProduct,
+    UpdateOneZTProduct,
+    DeleteLogicZTProduct,
+    DeleteHardZTProduct,
+    ActivateOneZTProduct
 };

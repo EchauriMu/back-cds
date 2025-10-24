@@ -7,969 +7,591 @@ const { OK, FAIL, BITACORA, DATA, AddMSG } = require('../../middlewares/respPWA.
 const { saveWithAudit } = require('../../helpers/audit-timestap');
 
 // ============================================
-// UTIL: Extraer payload del request
+// UTIL: OBTENER PAYLOAD DESDE CDS/EXPRESS
 // ============================================
 function getPayload(req) {
-  // Intentar diferentes ubicaciones del payload
-  let payload = null;
-  
-  // 1. req.data.payload (cuando viene como String desde CDS)
-  if (req.data && req.data.payload) {
-    try {
-      // Si es String, parsearlo
-      payload = typeof req.data.payload === 'string' 
-        ? JSON.parse(req.data.payload) 
-        : req.data.payload;
-    } catch (e) {
-      console.error('[getPayload] Error parseando req.data.payload:', e.message);
-    }
-  }
-  // 2. req.data (CAP estándar - objeto completo)
-  else if (req.data && typeof req.data === 'object' && Object.keys(req.data).length > 0) {
-    // Excluir si solo tiene 'payload'
-    const keys = Object.keys(req.data);
-    if (!(keys.length === 1 && keys[0] === 'payload')) {
-      payload = req.data;
-    }
-  }
-  // 3. req.req.body (HTTP directo)
-  else if (req.req && req.req.body && typeof req.req.body === 'object') {
-    payload = req.req.body;
-  }
-  // 4. req.body (alternativo)
-  else if (req.body && typeof req.body === 'object') {
-    payload = req.body;
-  }
-  
-  return payload;
+  return req.data || req.req?.body || null;
 }
 
 // ============================================
-// CRUD PRINCIPAL - Promociones
+// CRUD BÁSICO (MONGO PURO) - Capa 1
 // ============================================
-/**
- * EndPoint: POST /api/ztpromociones/crudPromociones
- * 
- * ESTRATEGIA DE BITÁCORA OPTIMIZADA:
- * - Flujo exitoso: Un único registro final en bitacora.data con toda la respuesta
- * - Flujo con error: Múltiples registros donde el último es el error + finalRes=true
- * 
- * Parámetros obligatorios:
- * @param {string} ProcessType - GetFilters | AddMany | UpdateMany | DeleteMany
- * @param {string} LoggedUser - Usuario formato: jlopezm
- * 
- * Parámetros opcionales:
- * @param {string} DBServer - Default: MongoDB | HANA | AzureCosmos
- * @param {string} method/api - Autoconfigurado por el sistema
- * 
- * @example ?ProcessType=GetFilters&LoggedUser=jlopezm
- */
+
+//----------------------------------------
+//FIC: CRUD Promociones Service with Bitacora
+//----------------------------------------
+/* EndPoint: localhost:8080/api/ztpromociones/crudPromociones?ProcessType='GetFilters'  */
 async function crudZTPromociones(req) {
-  // ============================================
-  // INICIALIZACIÓN DE ESTRUCTURAS BASE
-  // ============================================
-  // Instanciar bitácora y data al inicio del servicio
+  
   let bitacora = BITACORA();
   let data = DATA();
   
-  // ============================================
-  // DEBUG: Ver qué contiene el request
-  // ============================================
-  if (process.env.NODE_ENV === 'development') { // eslint-disable-line
-    console.log('[ZTPROMOCIONES DEBUG] ═══════════════════════════════════════');
-    console.log('[ZTPROMOCIONES DEBUG] req.data:', JSON.stringify(req.data, null, 2));
-    console.log('[ZTPROMOCIONES DEBUG] req.req.body:', JSON.stringify(req.req?.body, null, 2));
-    console.log('[ZTPROMOCIONES DEBUG] req.body:', JSON.stringify(req.body, null, 2));
-    console.log('[ZTPROMOCIONES DEBUG] req.req.query:', JSON.stringify(req.req?.query, null, 2));
-    console.log('[ZTPROMOCIONES DEBUG] ═══════════════════════════════════════');
-  }
-  
   try {
-    // Extraer parámetros del request
+    // 1. EXTRAER Y SERIALIZAR PARÁMETROS
     const params = req.req?.query || {};
     const body = req.req?.body;
     const paramString = params ? new URLSearchParams(params).toString().trim() : '';
-    const { ProcessType, LoggedUser, DBServer } = params;
+    const { ProcessType, LoggedUser, DBServer, IdPromoOK } = params;
     
-    // ============================================
-    // VALIDACIÓN DE PARÁMETROS OBLIGATORIOS
-    // ============================================
-    // Si falla validación, registrar error y detener ejecución
+    // 2. VALIDAR PARÁMETROS OBLIGATORIOS
     if (!ProcessType) {
-      data.process = 'Validación de parámetros';
-      data.processType = 'ValidationError';
+      data.process = 'Validación de parámetros obligatorios';
       data.messageUSR = 'Falta parámetro obligatorio: ProcessType';
-      data.messageDEV = 'Valores válidos: GetFilters, AddMany, UpdateMany, DeleteMany';
-      data.api = '/api/ztpromociones/crudPromociones';
-      data.method = req.req?.method || 'POST';
-      
-      // Registrar error en bitácora
+      data.messageDEV = 'ProcessType es requerido para ejecutar la API. Valores válidos: GetAll, GetOne, AddOne, UpdateOne, DeleteLogic, DeleteHard, ActivateOne';
       bitacora = AddMSG(bitacora, data, 'FAIL', 400, true);
-      
-      // Establecer finalRes para detener ejecución
       bitacora.finalRes = true;
-      
       return FAIL(bitacora);
     }
     
     if (!LoggedUser) {
-      data.process = 'Validación de parámetros';
-      data.processType = 'ValidationError';
+      data.process = 'Validación de parámetros obligatorios';
       data.messageUSR = 'Falta parámetro obligatorio: LoggedUser';
-      data.messageDEV = 'Usuario requerido para auditoría. Formato esperado: jlopezm';
-      data.api = '/api/ztpromociones/crudPromociones';
-      data.method = req.req?.method || 'POST';
-      
-      // Registrar error en bitácora
+      data.messageDEV = 'LoggedUser es requerido para trazabilidad del sistema';
       bitacora = AddMSG(bitacora, data, 'FAIL', 400, true);
-      
-      // Establecer finalRes para detener ejecución
       bitacora.finalRes = true;
-      
       return FAIL(bitacora);
     }
     
-    // ============================================
-    // CONFIGURAR CONTEXTO DE BITÁCORA
-    // ============================================
-    // La bitácora debe incluir información del proceso, usuario, servidor y endpoint
-    const dbServer = DBServer || 'MongoDB';
-    
-    // Campos obligatorios de la bitácora
-    bitacora.processType = ProcessType;              // Tipo de operación (GetFilters, AddMany, etc.)
-    bitacora.dbServer = dbServer;                    // Servidor de BD usado (MongoDB, HANA, etc.)
-    bitacora.loggedUser = LoggedUser;                // Usuario que ejecuta el proceso
-    bitacora.method = req.req?.method || 'POST';     // Método HTTP (GET, POST, etc.)
-    bitacora.api = '/api/ztpromociones/crudPromociones';  // Ruta del endpoint
-    
-    // Campos adicionales para auditoría
-    bitacora.queryString = paramString;              // Parámetros de la URL serializados
+    // 3. CONFIGURAR CONTEXTO DE LA BITÁCORA
+    const dbServer = DBServer || 'MongoDB'; // Default explícito
+    bitacora.processType = ProcessType;
+    bitacora.loggedUser = LoggedUser;
+    bitacora.dbServer = dbServer;
+    bitacora.queryString = paramString;
+    bitacora.method = req.req?.method || 'UNKNOWN';
+    bitacora.api = '/api/ztpromociones/crudPromociones';
     bitacora.server = process.env.SERVER_NAME || 'No especificado'; // eslint-disable-line
-    bitacora.timestamp = new Date().toISOString();   // Timestamp de inicio
 
-    // ============================================
-    // EJECUTAR OPERACIÓN SEGÚN ProcessType
-    // ============================================
-    // Flujo con evaluación de promesa usando .then()
+    // 4. EJECUTAR OPERACIÓN SEGÚN PROCESSTYPE
     switch (ProcessType) {
-      case 'GetFilters':
-        // Llamar al método local (query real)
-        bitacora = await GetFiltersPromocionesMethod(bitacora, params, paramString, body, dbServer)
-          .then((bitacora) => {
-            // Evaluar la promesa retornada
-            if (!bitacora.success) {
-              // Si falló, marcar como respuesta final y lanzar error
-              bitacora.finalRes = true;
-              throw bitacora;
-            }
-            return bitacora;
-          });
+      case 'GetAll':
+        bitacora = await GetPromocionMethod(bitacora, params, paramString, body, dbServer);
+        if (!bitacora.success) {
+          bitacora.finalRes = true;
+          return FAIL(bitacora);
+        }
         break;
         
-      case 'AddMany':
-        // Llamar al método local (query real)
-        bitacora = await AddManyPromocionesMethod(bitacora, params, body, req, dbServer)
-          .then((bitacora) => {
-            // Evaluar la promesa retornada
-            if (!bitacora.success) {
-              // Si falló, marcar como respuesta final y lanzar error
-              bitacora.finalRes = true;
-              throw bitacora;
-            }
-            return bitacora;
-          });
+      case 'GetOne':
+        if (!IdPromoOK) {
+          data.process = 'Validación de parámetros';
+          data.messageUSR = 'Falta parámetro obligatorio: IdPromoOK';
+          data.messageDEV = 'IdPromoOK es requerido para la operación GetOne';
+          bitacora = AddMSG(bitacora, data, 'FAIL', 400, true);
+          bitacora.finalRes = true;
+          return FAIL(bitacora);
+        }
+        bitacora = await GetPromocionMethod(bitacora, params, paramString, body, dbServer);
+        if (!bitacora.success) {
+          bitacora.finalRes = true;
+          return FAIL(bitacora);
+        }
         break;
         
-      case 'UpdateMany':
-        // Llamar al método local (query real)
-        bitacora = await UpdateManyPromocionesMethod(bitacora, params, body, LoggedUser, dbServer)
-          .then((bitacora) => {
-            // Evaluar la promesa retornada
-            if (!bitacora.success) {
-              // Si falló, marcar como respuesta final y lanzar error
-              bitacora.finalRes = true;
-              throw bitacora;
-            }
-            return bitacora;
-          });
+      case 'AddOne':
+        bitacora = await AddPromocionMethod(bitacora, params, paramString, body, req, dbServer);
+        if (!bitacora.success) {
+          bitacora.finalRes = true;
+          return FAIL(bitacora);
+        }
         break;
-        
-      case 'DeleteMany':
-        // Llamar al método local (query real)
-        bitacora = await DeleteManyPromocionesMethod(bitacora, params, body, LoggedUser, dbServer)
-          .then((bitacora) => {
-            // Evaluar la promesa retornada
-            if (!bitacora.success) {
-              // Si falló, marcar como respuesta final y lanzar error
-              bitacora.finalRes = true;
-              throw bitacora;
-            }
-            return bitacora;
-          });
+
+      case 'UpdateOne':
+        if (!IdPromoOK) {
+          data.process = 'Validación de parámetros';
+          data.messageUSR = 'Falta parámetro obligatorio: IdPromoOK';
+          data.messageDEV = 'IdPromoOK es requerido para la operación UpdateOne';
+          bitacora = AddMSG(bitacora, data, 'FAIL', 400, true);
+          bitacora.finalRes = true;
+          return FAIL(bitacora);
+        }
+        bitacora = await UpdatePromocionMethod(bitacora, params, paramString, body, req, LoggedUser, dbServer);
+        if (!bitacora.success) {
+          bitacora.finalRes = true;
+          return FAIL(bitacora);
+        }
+        break;
+
+      case 'DeleteLogic':
+        if (!IdPromoOK) {
+          data.process = 'Validación de parámetros';
+          data.messageUSR = 'Falta parámetro obligatorio: IdPromoOK';
+          data.messageDEV = 'IdPromoOK es requerido para la operación DeleteLogic';
+          bitacora = AddMSG(bitacora, data, 'FAIL', 400, true);
+          bitacora.finalRes = true;
+          return FAIL(bitacora);
+        }
+        bitacora = await DeletePromocionMethod(bitacora, { ...params, paramString }, IdPromoOK, LoggedUser, dbServer);
+        if (!bitacora.success) {
+          bitacora.finalRes = true;
+          return FAIL(bitacora);
+        }
+        break;
+
+      case 'DeleteHard':
+        if (!IdPromoOK) {
+          data.process = 'Validación de parámetros';
+          data.messageUSR = 'Falta parámetro obligatorio: IdPromoOK';
+          data.messageDEV = 'IdPromoOK es requerido para la operación DeleteHard';
+          bitacora = AddMSG(bitacora, data, 'FAIL', 400, true);
+          bitacora.finalRes = true;
+          return FAIL(bitacora);
+        }
+        bitacora = await DeletePromocionMethod(bitacora, { ...params, paramString }, IdPromoOK, LoggedUser, dbServer);
+        if (!bitacora.success) {
+          bitacora.finalRes = true;
+          return FAIL(bitacora);
+        }
+        break;
+
+      case 'ActivateOne':
+        if (!IdPromoOK) {
+          data.process = 'Validación de parámetros';
+          data.messageUSR = 'Falta parámetro obligatorio: IdPromoOK';
+          data.messageDEV = 'IdPromoOK es requerido para la operación ActivateOne';
+          bitacora = AddMSG(bitacora, data, 'FAIL', 400, true);
+          bitacora.finalRes = true;
+          return FAIL(bitacora);
+        }
+        // Agregar operation=activate para el método UpdatePromocionMethod
+        const activateParams = { ...params, operation: 'activate' };
+        bitacora = await UpdatePromocionMethod(bitacora, activateParams, paramString, body, req, LoggedUser, dbServer);
+        if (!bitacora.success) {
+          bitacora.finalRes = true;
+          return FAIL(bitacora);
+        }
         break;
         
       default:
-        // ProcessType inválido
-        data.process = 'Validación ProcessType';
-        data.processType = 'ValidationError';
-        data.messageUSR = `ProcessType inválido: "${ProcessType}"`;
-        data.messageDEV = 'Valores permitidos: GetFilters, AddMany, UpdateMany, DeleteMany';
-        data.api = '/api/ztpromociones/crudPromociones';
-        data.method = req.req?.method || 'POST';
-        
-        // Registrar error en bitácora
+        data.process = 'Validación de ProcessType';
+        data.messageUSR = 'ProcessType inválido o no especificado';
+        data.messageDEV = 'ProcessType debe ser uno de: GetAll, GetOne, AddOne, UpdateOne, DeleteLogic, DeleteHard, ActivateOne';
         bitacora = AddMSG(bitacora, data, 'FAIL', 400, true);
-        
-        // Establecer finalRes para detener ejecución
         bitacora.finalRes = true;
-        
         return FAIL(bitacora);
     }
+
     
-    // ============================================
-    // FLUJO EXITOSO: Retornar resultado único
-    // ============================================
-    // Todo el proceso fue exitoso, retornar bitácora completa
     return OK(bitacora);
     
   } catch (error) {
-    // ============================================
-    // MANEJO INTEGRAL DE ERRORES CAPTURADOS EN CATCH
-    // ============================================
-    
-    // ============================================
-    // CASO 1: Error ya manejado por métodos locales
-    // ============================================
-    // Si el error tiene finalRes=true, significa que ya fue procesado
-    // en el método local y contiene toda la bitácora con el error
-    if (error.finalRes === true || bitacora.finalRes === true) {
-      // El error ya está registrado en bitácora.data como último registro
-      // Solo retornar FAIL con la bitácora completa (incluyendo errores previos)
-      
-      console.error('[ZTPROMOCIONES] ⚠️  Error manejado por método local');
-      console.error('[ZTPROMOCIONES] 📊 Bitácora con historial:', JSON.stringify(error.data || bitacora.data, null, 2));
-      
-      // Si el error es un objeto bitácora (lanzado desde .then()), usarlo
-      if (error.data && Array.isArray(error.data)) {
-        return FAIL(error);
-      }
-      
+    // Si el error ya tiene finalRes = true, significa que fue manejado en un método local
+    if (bitacora.finalRes) {
       return FAIL(bitacora);
     }
     
-    // ============================================
-    // CASO 2: ERROR INESPERADO NO MANEJADO
-    // ============================================
-    // Error que no fue capturado por los métodos locales
-    // Crear nuevo objeto data para registrar el error inesperado
-    
-    let errorData = DATA();
-    errorData.process = 'Error inesperado en servicio principal';
-    errorData.processType = 'UnhandledError';
-    errorData.messageUSR = 'Error crítico al procesar solicitud. Contacte al administrador del sistema.';
-    errorData.messageDEV = `Error no capturado: ${error.message}`;
-    errorData.api = '/api/ztpromociones/crudPromociones';
-    errorData.method = req.req?.method || 'POST';
-    
-    // Incluir stack trace completo solo en desarrollo
-    if (process.env.NODE_ENV === 'development') { // eslint-disable-line
-      errorData.stack = error.stack;
-      errorData.errorDetails = {
-        name: error.name,
-        code: error.code,
-        cause: error.cause
-      };
-    }
-    
-    // Registrar error inesperado en bitácora (será el último registro)
-    bitacora = AddMSG(bitacora, errorData, 'FAIL', 500, true);
-    
-    // Establecer finalRes para indicar que este es el error final
+    // Error no manejado - captura inesperada
+    data.process = 'Catch principal crudZTPromociones';
+    data.messageUSR = 'Ocurrió un error inesperado en el endpoint';
+    data.messageDEV = error.message;
+    data.stack = process.env.NODE_ENV === 'development' ? error.stack : undefined; // eslint-disable-line
+    bitacora = AddMSG(bitacora, data, 'FAIL', 500, true);
     bitacora.finalRes = true;
-    bitacora.success = false;
     
-    // ============================================
-    // LOG DE ERROR CRÍTICO
-    // ============================================
-    
-    // Log detallado en consola para debugging inmediato
-    console.error('[ZTPROMOCIONES] ❌ ERROR CRÍTICO INESPERADO:');
-    console.error('[ZTPROMOCIONES] 📛 Mensaje:', error.message);
-    console.error('[ZTPROMOCIONES] 📊 Bitácora completa:', JSON.stringify(bitacora, null, 2));
-    
-    if (process.env.NODE_ENV === 'development') { // eslint-disable-line
-      console.error('[ZTPROMOCIONES] 🔍 Stack trace:', error.stack);
+    // NOTIFICACIÓN ESTRUCTURADA A CAP
+    if (req?.error) {
+      req.error({
+        code: 'Internal-Server-Error',
+        status: bitacora.status || 500,
+        message: bitacora.messageUSR || data.messageUSR,
+        target: bitacora.messageDEV || data.messageDEV,
+        numericSeverity: 1,
+        innererror: bitacora
+      });
     }
     
-    // Retornar FAIL con toda la bitácora (incluyendo errores previos + error final)
+    // TODO: Implementar registro en tabla de errores
+    // await logErrorToDatabase(error, bitacora);
+    
+    // TODO: Implementar notificación de error
+    // await notifyError(bitacora.loggedUser, error);
+    
     return FAIL(bitacora);
   }
 }
 
-// ============================================ 
-// CRUD BÁSICO: Operaciones simples
-// ============================================
+//####################################################################################
+//FIC: Methods for each operation with Bitacora - Capa 2
+//####################################################################################
+
 async function GetAllZTPromociones() {
   return await ZTPromociones.find({ ACTIVED: true, DELETED: false }).lean();
 }
 
-async function GetOneZTPromocion(filter) {
-  if (!filter) throw new Error('Falta parámetro filter');
-  const promo = await ZTPromociones.findOne({ ...filter, ACTIVED: true, DELETED: false }).lean();
-  if (!promo) throw new Error('No se encontró la promoción');
+async function GetOneZTPromocion(idPromoOK) {
+  if (!idPromoOK) throw new Error('IdPromoOK es requerido');
+  const promo = await ZTPromociones.findOne({ IdPromoOK: idPromoOK, ACTIVED: true, DELETED: false }).lean();
+  if (!promo) throw new Error(`No se encontró la promoción con IdPromoOK: ${idPromoOK}`);
   return promo;
 }
 
-//============================================
-// CRUD BÁSICO: DELETE / ACTIVATE
-//============================================
-async function DeleteZTPromocionLogic(filter, user) {
-  if (!filter) throw new Error('Falta parámetro filter');
-  const data = { ACTIVED: false, DELETED: true };
-  const action = 'UPDATE';
-  return await saveWithAudit(ZTPromociones, filter, data, user, action);
+async function AddOneZTPromocion(payload, user) {
+  const required = ['IdPromoOK', 'Titulo', 'FechaIni', 'FechaFin'];
+  const missing = required.filter(k => !payload[k]);
+  if (missing.length) throw new Error(`Faltan campos obligatorios: ${missing.join(', ')}`);
+  if (!user) throw new Error('Usuario requerido para auditoría');
+  
+  const existe = await ZTPromociones.findOne({ IdPromoOK: payload.IdPromoOK }).lean();
+  if (existe) throw new Error(`Ya existe una promoción con IdPromoOK: ${payload.IdPromoOK}`);
+  
+  const promoData = { ...payload, ACTIVED: payload.ACTIVED ?? true, DELETED: payload.DELETED ?? false };
+  return await saveWithAudit(ZTPromociones, {}, promoData, user, 'CREATE');
 }
 
-async function DeleteZTPromocionHard(filter) {
-  if (!filter) throw new Error('Falta parámetro filter');
-  const eliminado = await ZTPromociones.findOneAndDelete(filter);
-  if (!eliminado) throw new Error('Promoción no encontrada');
-  return { mensaje: 'Promoción eliminada', filter };
+async function UpdateOneZTPromocion(idPromoOK, payload, user) {
+  if (!idPromoOK) throw new Error('IdPromoOK es requerido');
+  if (!user) throw new Error('Usuario requerido para auditoría');
+  
+  const filter = { IdPromoOK: idPromoOK, ACTIVED: true, DELETED: false };
+  const promo = await saveWithAudit(ZTPromociones, filter, payload, user, 'UPDATE');
+  if (!promo) throw new Error(`No se encontró la promoción con IdPromoOK: ${idPromoOK}`);
+  return promo;
 }
 
-async function ActivateZTPromocion(filter, user) {
-  if (!filter) throw new Error('Falta parámetro filter');
-  const data = { ACTIVED: true, DELETED: false };
-  return await saveWithAudit(ZTPromociones, filter, data, user, 'UPDATE');
+async function DeleteLogicZTPromocion(idPromoOK, user) {
+  if (!idPromoOK) throw new Error('IdPromoOK es requerido');
+  if (!user) throw new Error('Usuario requerido para auditoría');
+  
+  const filter = { IdPromoOK: idPromoOK, DELETED: false };
+  const deleteData = { DELETED: true, ACTIVED: false };
+  const promo = await saveWithAudit(ZTPromociones, filter, deleteData, user, 'UPDATE');
+  if (!promo) throw new Error(`No se encontró la promoción con IdPromoOK: ${idPromoOK}`);
+  return promo;
 }
 
-// ============================================
-// MÉTODOS LOCALES CON BITÁCORA
-// ============================================
-
-/**
- * GetFilters: Obtiene promociones con filtros dinámicos
- * Soporta: IdPromoOK, SKUID, IdListaOK, vigentes, paginación
- * 
- * ESTRATEGIA DE BITÁCORA:
- * - Éxito: Registrar UN SOLO resultado final con todos los datos
- * - Error: Registrar error y establecer finalRes=true
- * 
- * @param {Object} bitacora - Instancia de bitácora pasada por referencia
- * @param {Object} params - Parámetros del query string
- * @param {String} paramString - Cadena serializada de parámetros
- * @param {Object} body - Body del request
- * @param {String} dbServer - Motor de base de datos
- * @returns {Object} bitacora actualizada
- */
-async function GetFiltersPromocionesMethod(bitacora, params, paramString, body, dbServer) {
-  // ============================================
-  // INICIALIZACIÓN DE DATA PARA ESTE MÉTODO
-  // ============================================
-  // Instanciar nuevo objeto data para este método
-  let data = DATA();
-  
-  // ============================================
-  // CONFIGURACIÓN DE BITÁCORA (campos obligatorios)
-  // ============================================
-  // La bitácora heredó los valores del servicio principal,
-  // aquí solo actualizamos campos específicos del método
-  
-  // Configurar contexto del data
-  data.process = 'Obtener promociones (GetFilters)';
-  data.processType = bitacora.processType;           // Ya configurado en servicio principal
-  data.loggedUser = bitacora.loggedUser;             // Ya configurado en servicio principal
-  data.dbServer = bitacora.dbServer;                 // Ya configurado en servicio principal
-  data.method = bitacora.method;                     // Ya configurado en servicio principal
-  data.api = bitacora.api;                           // Ya configurado en servicio principal
-  data.queryString = bitacora.queryString;           // Ya configurado en servicio principal
-  data.server = bitacora.server;                     // Ya configurado en servicio principal
-  data.principal = true;                             // Marcar como proceso principal
-  
-  // La bitácora ya tiene configurados:
-  // - bitacora.processType → tipo de operación (GetFilters)
-  // - bitacora.dbServer → servidor de BD usado (MongoDB)
-  // - bitacora.loggedUser → usuario que ejecuta el proceso
-  // - bitacora.method → método HTTP (POST)
-  // - bitacora.api → ruta del endpoint
-  // - bitacora.queryString → parámetros serializados
-  bitacora.process = 'Obtener promociones (GetFilters)';
-  
-  try {
-    let promociones;
-    let filter = {};
-    
-    switch (dbServer) {
-      case 'MongoDB':
-        const {
-          IdPromoOK,
-          SKUID,
-          IdListaOK,
-          vigentes,
-          limit = 100,
-          offset = 0
-        } = params;
-
-        // Construir filtro base
-        filter = { ACTIVED: true, DELETED: false };
-        
-        if (IdPromoOK) filter.IdPromoOK = IdPromoOK;
-        if (SKUID) filter.SKUID = SKUID;
-        if (IdListaOK) filter.IdListaOK = IdListaOK;
-        
-        // Filtro por vigencia
-        if (vigentes === 'true') {
-          const now = new Date();
-          filter.FechaIni = { $lte: now };
-          filter.FechaFin = { $gte: now };
-        }
-
-        // Ejecutar query con paginación
-        promociones = await new Promise((resolve, reject) => {
-          ZTPromociones.find(filter)
-            .limit(parseInt(limit))
-            .skip(parseInt(offset))
-            .lean()
-            .exec()
-            .then(result => resolve(result))
-            .catch(error => reject(error));
-        });
-        break;
-        
-      case 'HANA':
-        throw new Error('HANA no implementado');
-      default:
-        throw new Error(`DBServer no soportado: ${dbServer}`);
-    }
-    
-    // ============================================
-    // FLUJO EXITOSO: UN SOLO REGISTRO EN BITÁCORA
-    // ============================================
-    data.dataRes = promociones;
-    data.countDataRes = promociones.length;
-    data.messageUSR = `Promociones obtenidas exitosamente: ${promociones.length} registro(s)`;
-    data.messageDEV = `Filtros aplicados: ${JSON.stringify(filter)} | Paginación: limit=${params.limit || 100}, offset=${params.offset || 0}`;
-    
-    // Registrar resultado exitoso en bitácora (único registro)
-    bitacora = AddMSG(bitacora, data, 'OK', 200, true);
-    bitacora.success = true;
-    
-    return bitacora;
-    
-  } catch (error) {
-    // ============================================
-    // FLUJO CON ERROR: REGISTRAR Y DETENER
-    // ============================================
-    data.messageUSR = 'Error al obtener promociones';
-    data.messageDEV = `Error en query MongoDB: ${error.message}`;
-    
-    // Incluir stack trace solo en desarrollo
-    if (process.env.NODE_ENV === 'development') { // eslint-disable-line
-      data.stack = error.stack;
-    }
-    
-    // Registrar error en bitácora (será el último registro)
-    bitacora = AddMSG(bitacora, data, 'FAIL', 500, true);
-    bitacora.success = false;
-    
-    // Marcar como respuesta final para detener ejecución
-    bitacora.finalRes = true;
-    
-    // Log de error
-    console.error('[GetFilters] ❌ Error:', error.message);
-    
-    return bitacora;
-  }
+async function DeleteHardZTPromocion(idPromoOK) {
+  if (!idPromoOK) throw new Error('IdPromoOK es requerido');
+  const promo = await ZTPromociones.findOneAndDelete({ IdPromoOK: idPromoOK });
+  if (!promo) throw new Error(`No se encontró la promoción con IdPromoOK: ${idPromoOK}`);
+  return promo;
 }
 
-/**
- * AddMany: Crea una o múltiples promociones
- * Usa saveWithAudit (≤10) o insertMany (>10)
- * 
- * ESTRATEGIA DE BITÁCORA:
- * - Éxito: Registrar UN SOLO resultado final con resumen de creaciones
- * - Error: Registrar error y establecer finalRes=true
- * 
- * @param {Object} bitacora - Instancia de bitácora pasada por referencia
- * @param {Object} params - Parámetros del query string
- * @param {Object} body - Body del request
- * @param {Object} req - Request completo
- * @param {String} dbServer - Motor de base de datos
- * @returns {Object} bitacora actualizada
- */
-async function AddManyPromocionesMethod(bitacora, params, body, req, dbServer) {
-  // ============================================
-  // INICIALIZACIÓN DE DATA PARA ESTE MÉTODO
-  // ============================================
-  // Instanciar nuevo objeto data para este método
-  let data = DATA();
-  
-  // ============================================
-  // CONFIGURACIÓN DE BITÁCORA (campos obligatorios)
-  // ============================================
-  // La bitácora heredó los valores del servicio principal
-  
-  // Configurar contexto del data
-  data.process = 'Crear promociones (AddMany)';
-  data.processType = bitacora.processType;           // Ya configurado en servicio principal
-  data.loggedUser = bitacora.loggedUser;             // Ya configurado en servicio principal
-  data.dbServer = bitacora.dbServer;                 // Ya configurado en servicio principal
-  data.method = bitacora.method;                     // Ya configurado en servicio principal
-  data.api = bitacora.api;                           // Ya configurado en servicio principal
-  data.server = bitacora.server;                     // Ya configurado en servicio principal
-  data.principal = true;                             // Marcar como proceso principal
-  
-  // Actualizar descripción del proceso en bitácora
-  bitacora.process = 'Crear promociones (AddMany)';
-  
-  try {
-    let result;
-    const payload = getPayload(req);
+async function ActivateOneZTPromocion(idPromoOK) {
+  if (!idPromoOK) throw new Error('IdPromoOK es requerido');
+  const promo = await ZTPromociones.findOneAndUpdate(
+    { IdPromoOK: idPromoOK },
+    { ACTIVED: true, DELETED: false },
+    { new: true, lean: true }
+  );
+  if (!promo) throw new Error(`No se encontró la promoción con IdPromoOK: ${idPromoOK}`);
+  return promo;
+}
+
+//####################################################################################
+//FIC: Methods for each operation with Bitacora - Capa 2
+//####################################################################################
+
+async function GetPromocionMethod(bitacora, params, paramString, body, dbServer) {
+    let data = DATA();
     
-    switch (dbServer) {
-      case 'MongoDB':
-        // Validar payload - permitir tanto 'promociones' como directamente el array
-        let promocionesData;
+    // Configurar contexto de data
+    data.process = 'Obtener promoción(es)';
+    data.processType = params.ProcessType || '';
+    data.loggedUser = params.LoggedUser || '';
+    data.dbServer = dbServer;
+    data.server = process.env.SERVER_NAME || ''; // eslint-disable-line
+    data.api = '/api/ztpromociones/crudPromociones';
+    data.queryString = paramString;
+    
+    // Propagar en bitácora
+    bitacora.processType = params.ProcessType || '';
+    bitacora.loggedUser = params.LoggedUser || '';
+    bitacora.dbServer = dbServer;
+    bitacora.server = process.env.SERVER_NAME || ''; // eslint-disable-line
+    bitacora.process = 'Obtener promoción(es)';
+    
+    try {
+        const processType = params.ProcessType;
         
-        if (!payload) {
-          throw new Error('Se requiere array promociones en el body');
+        if (processType === 'GetAll') {
+            bitacora.process = "Obtener todas las PROMOCIONES";
+            data.process = "Consulta de todas las promociones";
+            data.method = "GET";
+            data.api = "/api/ztpromociones/crudPromociones?ProcessType=GetAll";
+            data.principal = true;
+
+            let promociones;
+            switch (dbServer) {
+                case 'MongoDB':
+                    promociones = await GetAllZTPromociones();
+                    break;
+                case 'HANA':
+                    throw new Error('HANA no implementado aún para GetAll');
+                default:
+                    throw new Error(`DBServer no soportado: ${dbServer}`);
+            }
+            
+            data.dataRes = promociones;
+            data.messageUSR = `Se obtuvieron ${promociones.length} promociones correctamente`;
+            data.messageDEV = 'GetAllZTPromociones ejecutado sin errores';
+            bitacora = AddMSG(bitacora, data, 'OK', 200, true);
+            
+        } else if (processType === 'GetOne') {
+            bitacora.process = "Obtener UNA PROMOCIÓN";
+            data.process = "Consulta de promoción específica";
+            data.method = "GET";
+            data.api = "/api/ztpromociones/crudPromociones?ProcessType=GetOne";
+            data.principal = true;
+
+            const idPromoOK = params.IdPromoOK;
+            
+            if (!idPromoOK) {
+                data.messageUSR = "ID de promoción requerido";
+                data.messageDEV = "IdPromoOK es requerido para obtener una promoción";
+                bitacora = AddMSG(bitacora, data, 'FAIL', 400, true);
+                bitacora.success = false;
+                return bitacora;
+            }
+
+            let promocion;
+            switch (dbServer) {
+                case 'MongoDB':
+                    promocion = await GetOneZTPromocion(idPromoOK);
+                    break;
+                case 'HANA':
+                    throw new Error('HANA no implementado aún para GetOne');
+                default:
+                    throw new Error(`DBServer no soportado: ${dbServer}`);
+            }
+            
+            data.dataRes = promocion;
+            data.messageUSR = "Promoción encontrada correctamente";
+            data.messageDEV = `Promoción con IdPromoOK ${idPromoOK} encontrada`;
+            bitacora = AddMSG(bitacora, data, 'OK', 200, true);
         }
         
-        // Permitir tanto { promociones: [...] } como [...] directamente
-        if (Array.isArray(payload)) {
-          promocionesData = payload;
-        } else if (payload.promociones && Array.isArray(payload.promociones)) {
-          promocionesData = payload.promociones;
+        bitacora.success = true;
+        return bitacora;
+        
+    } catch (error) {
+        // MANEJO ESPECÍFICO DE ERRORES 404 vs 500
+        if (error.message.includes('No se encontró') || error.message.includes('no encontrado')) {
+            data.messageUSR = 'Promoción no encontrada';
+            data.messageDEV = error.message;
+            bitacora = AddMSG(bitacora, data, 'FAIL', 404, true);
         } else {
-          throw new Error('Se requiere array promociones en el body');
+            data.messageUSR = 'Error al obtener la(s) promoción(es)';
+            data.messageDEV = error.message;
+            bitacora = AddMSG(bitacora, data, 'FAIL', 500, true);
+        }
+        data.stack = process.env.NODE_ENV === 'development' ? error.stack : undefined; // eslint-disable-line
+        bitacora.success = false;
+        return bitacora;
+    }
+}
+
+async function AddPromocionMethod(bitacora, params, paramString, body, req, dbServer) {
+    let data = DATA();
+    
+    // Configurar contexto de data
+    data.process = 'Agregar promoción';
+    data.processType = params.ProcessType || '';
+    data.loggedUser = params.LoggedUser || '';
+    data.dbServer = dbServer;
+    data.server = process.env.SERVER_NAME || ''; // eslint-disable-line
+    data.api = '/api/ztpromociones/crudPromociones';
+    data.method = "POST";
+    data.principal = true;
+    data.queryString = paramString;
+    
+    // Propagar en bitácora
+    bitacora.processType = params.ProcessType || '';
+    bitacora.loggedUser = params.LoggedUser || '';
+    bitacora.dbServer = dbServer;
+    bitacora.server = process.env.SERVER_NAME || ''; // eslint-disable-line
+    bitacora.process = 'Agregar promoción';
+    bitacora.api = '/api/ztpromociones/crudPromociones';
+    bitacora.queryString = paramString;
+    
+    try {
+        let result;
+        switch (dbServer) {
+            case 'MongoDB':
+                result = await AddOneZTPromocion(getPayload(req), params.LoggedUser);
+                break;
+            case 'HANA':
+                throw new Error('HANA no implementado aún para AddOne');
+            default:
+                throw new Error(`DBServer no soportado: ${dbServer}`);
         }
         
-        if (promocionesData.length === 0) {
-          throw new Error('El array promociones no puede estar vacío');
+        data.dataRes = result;
+        data.messageUSR = 'Promoción creada exitosamente';
+        data.messageDEV = 'AddOneZTPromocion ejecutado sin errores';
+        bitacora = AddMSG(bitacora, data, 'OK', 201, true);
+        bitacora.success = true;
+        
+        if (req?.http?.res) {
+            req.http.res.status(201);
+            const id = (result && (result.IdPromoOK)) || '';
+            if (id) {
+                req.http.res.set('Location', `/api/ztpromociones/Promociones('${id}')`);
+            }
         }
+        
+        return bitacora;
+        
+    } catch (error) {
+        // MANEJO ESPECÍFICO DE ERRORES
+        if (error.message.includes('Faltan campos') || error.message.includes('Ya existe')) {
+            data.messageUSR = 'Error al crear la promoción - datos no válidos';
+            data.messageDEV = error.message;
+            bitacora = AddMSG(bitacora, data, 'FAIL', 400, true);
+        } else {
+            data.messageUSR = 'Error al crear la promoción';
+            data.messageDEV = error.message;
+            bitacora = AddMSG(bitacora, data, 'FAIL', 500, true);
+        }
+        bitacora.success = false;
+        return bitacora;
+    }
+}
 
-        // Validar campos obligatorios
-        const promocionesValidadas = promocionesData.map(promo => {
-          if (!promo.IdPromoOK || !promo.Titulo || !promo.FechaIni || !promo.FechaFin) {
-            throw new Error('Faltan campos obligatorios: IdPromoOK, Titulo, FechaIni, FechaFin');
-          }
-          return {
-            ...promo,
-            ACTIVED: true,
-            DELETED: false
-          };
-        });
-
-        // Insertar con auditoría
-        result = await new Promise(async (resolve, reject) => {
-          try {
-            const promocionesCreadas = [];
-            
-            // Para pocas promociones, usar saveWithAudit
-            if (promocionesValidadas.length <= 10) {
-              for (const promo of promocionesValidadas) {
-                try {
-                  const nuevaPromo = await saveWithAudit(
-                    ZTPromociones, 
-                    { IdPromoOK: promo.IdPromoOK },
-                    promo, 
-                    params.LoggedUser, 
-                    'CREATE'
-                  );
-                  promocionesCreadas.push(nuevaPromo);
-                } catch (error) {
-                  if (error.message.includes('E11000') || error.message.includes('duplicate')) {
-                    console.warn(`[ZTPROMOCIONES] ${promo.IdPromoOK} ya existe`);
-                  } else {
-                    reject(error);
-                    return;
-                  }
+/**
+ * UpdateOne: Actualiza una promoción
+ * Usa saveWithAudit (con IdPromoOK)
+ */
+async function UpdatePromocionMethod(bitacora, params, paramString, body, req, user, dbServer) {
+    let data = DATA();
+    
+    // Configurar contexto de data
+    data.process = 'Actualizar promoción';
+    data.processType = params.ProcessType || '';
+    data.loggedUser = params.LoggedUser || '';
+    data.dbServer = dbServer;
+    data.server = process.env.SERVER_NAME || ''; // eslint-disable-line
+    data.api = '/api/ztpromociones/crudPromociones';
+    data.method = "PUT";
+    data.principal = true;
+    data.queryString = paramString;
+    
+    // Propagar en bitácora
+    bitacora.processType = params.ProcessType || '';
+    bitacora.loggedUser = params.LoggedUser || '';
+    bitacora.dbServer = dbServer;
+    bitacora.server = process.env.SERVER_NAME || ''; // eslint-disable-line
+    bitacora.process = 'Actualizar promoción';
+    bitacora.api = '/api/ztpromociones/crudPromociones';
+    bitacora.queryString = paramString;
+    
+    try {
+        let result;
+        const idPromoOK = params.IdPromoOK;
+        const isActivate = params.operation === 'activate' || params.type === 'activate';
+        
+        switch (dbServer) {
+            case 'MongoDB':
+                if (isActivate) {
+                    // Usar función de activación
+                    result = await ActivateOneZTPromocion(idPromoOK);
+                } else {
+                    // Usar función de actualización
+                    result = await UpdateOneZTPromocion(
+                        idPromoOK,
+                        getPayload(req),
+                        user
+                    );
                 }
-              }
-            } else {
-              // Para muchas, usar insertMany con auditoría manual
-              const promocionesConAuditoria = promocionesValidadas.map(promo => ({
-                ...promo,
-                REGUSER: params.LoggedUser,
-                REGDATE: new Date(),
-                MODDATE: new Date()
-              }));
-              
-              const resultados = await ZTPromociones.insertMany(promocionesConAuditoria);
-              promocionesCreadas.push(...resultados);
-            }
-            
-            const resumen = promocionesCreadas.map(p => ({
-              IdPromoOK: p.IdPromoOK,
-              Titulo: p.Titulo,
-              REGUSER: p.REGUSER,
-              REGDATE: p.REGDATE
-            }));
-            
-            resolve(resumen);
-          } catch (error) {
-            reject(error);
-          }
-        });
-        break;
+                break;
+            case 'HANA':
+                throw new Error('HANA no implementado aún para UpdateOne');
+            default:
+                throw new Error(`DBServer no soportado: ${dbServer}`);
+        }
         
-      case 'HANA':
-        throw new Error('HANA no implementado');
-      default:
-        throw new Error(`DBServer no soportado: ${dbServer}`);
+        data.dataRes = result;
+        data.messageUSR = isActivate ? 'Promoción activada exitosamente' : 'Promoción actualizada exitosamente';
+        data.messageDEV = isActivate ? 'ActivateOneZTPromocion ejecutado sin errores' : 'UpdateOneZTPromocion ejecutado sin errores';
+        bitacora = AddMSG(bitacora, data, 'OK', 200, true);
+        bitacora.success = true;
+        
+        return bitacora;
+        
+    } catch (error) {
+        // MANEJO ESPECÍFICO DE ERRORES
+        if (error.message.includes('No se encontró') || error.message.includes('no encontrado')) {
+            data.messageUSR = 'Error al actualizar la promoción - promoción no encontrada';
+            data.messageDEV = error.message;
+            bitacora = AddMSG(bitacora, data, 'FAIL', 404, true);
+        } else if (error.message.includes('Faltan campos') || error.message.includes('no válido')) {
+            data.messageUSR = 'Error al actualizar la promoción - datos no válidos';
+            data.messageDEV = error.message;
+            bitacora = AddMSG(bitacora, data, 'FAIL', 400, true);
+        } else {
+            data.messageUSR = 'Error al actualizar la promoción';
+            data.messageDEV = error.message;
+            bitacora = AddMSG(bitacora, data, 'FAIL', 500, true);
+        }
+        bitacora.success = false;
+        return bitacora;
     }
-    
-    // ============================================
-    // FLUJO EXITOSO: UN SOLO REGISTRO EN BITÁCORA
-    // ============================================
-    data.dataRes = result;
-    data.countDataRes = result.length;
-    data.messageUSR = `Promociones creadas exitosamente: ${result.length} registro(s)`;
-    data.messageDEV = `AddMany ejecutado correctamente. Método: ${result.length <= 10 ? 'saveWithAudit' : 'insertMany'}`;
-    
-    // Registrar resultado exitoso en bitácora (único registro)
-    bitacora = AddMSG(bitacora, data, 'OK', 201, true);
-    bitacora.success = true;
-    
-    return bitacora;
-    
-  } catch (error) {
-    // ============================================
-    // FLUJO CON ERROR: REGISTRAR Y DETENER
-    // ============================================
-    data.messageUSR = 'Error al crear promociones';
-    data.messageDEV = `Error en AddMany: ${error.message}`;
-    
-    // Incluir stack trace solo en desarrollo
-    if (process.env.NODE_ENV === 'development') { // eslint-disable-line
-      data.stack = error.stack;
-    }
-    
-    // Registrar error en bitácora (será el último registro)
-    bitacora = AddMSG(bitacora, data, 'FAIL', 500, true);
-    bitacora.success = false;
-    
-    // Marcar como respuesta final para detener ejecución
-    bitacora.finalRes = true;
-    
-    // Log de error
-    console.error('[AddMany] ❌ Error:', error.message);
-    
-    return bitacora;
-  }
 }
 
-/**
- * UpdateMany: Actualiza una o múltiples promociones
- * Usa saveWithAudit (con IdPromoOK) o updateMany (masivo)
- * 
- * ESTRATEGIA DE BITÁCORA:
- * - Éxito: Registrar UN SOLO resultado final con resumen de actualizaciones
- * - Error: Registrar error y establecer finalRes=true
- * 
- * @param {Object} bitacora - Instancia de bitácora pasada por referencia
- * @param {Object} params - Parámetros del query string
- * @param {Object} body - Body del request con filter y updates
- * @param {String} user - Usuario que ejecuta la operación
- * @param {String} dbServer - Motor de base de datos
- * @returns {Object} bitacora actualizada
- */
-async function UpdateManyPromocionesMethod(bitacora, params, body, user, dbServer) {
-  // Instanciar nuevo objeto data para este método
-  let data = DATA();
-  
-  // ============================================
-  // CONFIGURACIÓN DE BITÁCORA (campos obligatorios)
-  // ============================================
-  // La bitácora heredó los valores del servicio principal
-  
-  // Configurar contexto del data
-  data.process = 'Actualizar promociones (UpdateMany)';
-  data.processType = bitacora.processType;           // Ya configurado en servicio principal
-  data.loggedUser = bitacora.loggedUser;             // Ya configurado en servicio principal
-  data.dbServer = bitacora.dbServer;                 // Ya configurado en servicio principal
-  data.method = bitacora.method;                     // Ya configurado en servicio principal
-  data.api = bitacora.api;                           // Ya configurado en servicio principal
-  data.server = bitacora.server;                     // Ya configurado en servicio principal
-  data.principal = true;                             // Marcar como proceso principal
-  
-  // Actualizar descripción del proceso en bitácora
-  bitacora.process = 'Actualizar promociones (UpdateMany)';
-  
-  try {
-    let result;
-    switch (dbServer) {
-      case 'MongoDB':
-        if (!body || (!body.filter && !body.updates)) {
-          throw new Error('Se requieren filter y updates en el body');
+async function DeletePromocionMethod(bitacora, params, IdPromoOK, user, dbServer) {
+    let data = DATA();
+    
+    // Configurar contexto de data
+    data.process = 'Eliminar promoción';
+    data.processType = params.ProcessType || '';
+    data.loggedUser = params.LoggedUser || '';
+    data.dbServer = dbServer;
+    data.server = process.env.SERVER_NAME || ''; // eslint-disable-line
+    data.api = '/api/ztpromociones/crudPromociones';
+    data.method = "DELETE";
+    data.principal = true;
+    data.queryString = params.paramString || '';
+    
+    // Propagar en bitácora
+    bitacora.processType = params.ProcessType || '';
+    bitacora.loggedUser = params.LoggedUser || '';
+    bitacora.dbServer = dbServer;
+    bitacora.server = process.env.SERVER_NAME || ''; // eslint-disable-line
+    bitacora.process = 'Eliminar promoción';
+    bitacora.api = '/api/ztpromociones/crudPromociones';
+    bitacora.queryString = params.paramString || '';
+    
+    try {
+        let result;
+        const isHardDelete = params.ProcessType === 'DeleteHard';
+        
+        switch (dbServer) {
+            case 'MongoDB':
+                if (isHardDelete) {
+                    // Usar función de eliminación física
+                    result = await DeleteHardZTPromocion(IdPromoOK);
+                } else {
+                    // Usar función de eliminación lógica
+                    result = await DeleteLogicZTPromocion(IdPromoOK, user);
+                }
+                break;
+            case 'HANA':
+                throw new Error('HANA no implementado aún para Delete');
+            default:
+                throw new Error(`DBServer no soportado: ${dbServer}`);
         }
-
-        const { filter, updates } = body;
-
-        result = await new Promise(async (resolve, reject) => {
-          try {
-            let updateResult;
-            
-            // Con IdPromoOK: usar saveWithAudit
-            if (filter.IdPromoOK) {
-              const savedPromo = await saveWithAudit(
-                ZTPromociones,
-                { ...filter, ACTIVED: true, DELETED: false },
-                updates,
-                user,
-                'UPDATE'
-              );
-              
-              updateResult = {
-                matchedCount: 1,
-                modifiedCount: savedPromo ? 1 : 0
-              };
-            } else {
-              // Sin IdPromoOK: updateMany con auditoría manual
-              updates.MODUSER = user;
-              updates.MODDATE = new Date();
-
-              updateResult = await ZTPromociones.updateMany(
-                { ...filter, ACTIVED: true, DELETED: false },
-                { $set: updates },
-                { runValidators: true }
-              );
-            }
-            
-            resolve(updateResult);
-          } catch (error) {
-            reject(error);
-          }
-        });
-        break;
         
-      case 'HANA':
-        throw new Error('HANA no implementado');
-      default:
-        throw new Error(`DBServer no soportado: ${dbServer}`);
-    }
-    
-    // ============================================
-    // FLUJO EXITOSO: UN SOLO REGISTRO EN BITÁCORA
-    // ============================================
-    data.dataRes = {
-      matched: result.matchedCount,
-      modified: result.modifiedCount,
-      filter: body.filter,
-      updates: body.updates
-    };
-    data.countDataRes = result.modifiedCount;
-    data.messageUSR = `Promociones actualizadas exitosamente: ${result.matchedCount} encontrada(s), ${result.modifiedCount} modificada(s)`;
-    data.messageDEV = `UpdateMany ejecutado correctamente. Método: ${body.filter.IdPromoOK ? 'saveWithAudit' : 'updateMany'}`;
-    
-    // Registrar resultado exitoso en bitácora (único registro)
-    bitacora = AddMSG(bitacora, data, 'OK', 200, true);
-    bitacora.success = true;
-    
-    return bitacora;
-    
-  } catch (error) {
-    // ============================================
-    // FLUJO CON ERROR: REGISTRAR Y DETENER
-    // ============================================
-    data.messageUSR = 'Error al actualizar promociones';
-    data.messageDEV = `Error en UpdateMany: ${error.message}`;
-    
-    // Incluir stack trace solo en desarrollo
-    if (process.env.NODE_ENV === 'development') { // eslint-disable-line
-      data.stack = error.stack;
-    }
-    
-    // Registrar error en bitácora (será el último registro)
-    bitacora = AddMSG(bitacora, data, 'FAIL', 500, true);
-    bitacora.success = false;
-    
-    // Marcar como respuesta final para detener ejecución
-    bitacora.finalRes = true;
-    
-    // Log de error
-    console.error('[UpdateMany] ❌ Error:', error.message);
-    
-    return bitacora;
-  }
-}
-
-/**
- * DeleteMany: Elimina lógica o físicamente promociones
- * deleteType: 'logic' (default) o 'hard'
- * 
- * ESTRATEGIA DE BITÁCORA:
- * - Éxito: Registrar UN SOLO resultado final con resumen de eliminaciones
- * - Error: Registrar error y establecer finalRes=true
- * 
- * @param {Object} bitacora - Instancia de bitácora pasada por referencia
- * @param {Object} params - Parámetros del query string
- * @param {Object} body - Body del request con filter
- * @param {String} user - Usuario que ejecuta la operación
- * @param {String} dbServer - Motor de base de datos
- * @returns {Object} bitacora actualizada
- */
-async function DeleteManyPromocionesMethod(bitacora, params, body, user, dbServer) {
-  // ============================================
-  // INICIALIZACIÓN DE DATA PARA ESTE MÉTODO
-  // ============================================
-  // Instanciar nuevo objeto data para este método
-  let data = DATA();
-  
-  // ============================================
-  // CONFIGURACIÓN DE BITÁCORA (campos obligatorios)
-  // ============================================
-  // La bitácora heredó los valores del servicio principal
-  
-  // Configurar contexto del data
-  data.process = 'Eliminar promociones (DeleteMany)';
-  data.processType = bitacora.processType;           // Ya configurado en servicio principal
-  data.loggedUser = bitacora.loggedUser;             // Ya configurado en servicio principal
-  data.dbServer = bitacora.dbServer;                 // Ya configurado en servicio principal
-  data.method = bitacora.method;                     // Ya configurado en servicio principal
-  data.api = bitacora.api;                           // Ya configurado en servicio principal
-  data.server = bitacora.server;                     // Ya configurado en servicio principal
-  data.principal = true;                             // Marcar como proceso principal
-  
-  // Actualizar descripción del proceso en bitácora
-  bitacora.process = 'Eliminar promociones (DeleteMany)';
-  
-  try {
-    let result;
-    switch (dbServer) {
-      case 'MongoDB':
-        const deleteType = params.deleteType || body.deleteType || 'logic';
+        data.dataRes = result;
+        data.messageUSR = isHardDelete ? 'Promoción eliminada físicamente' : 'Promoción eliminada lógicamente';
+        data.messageDEV = isHardDelete ? 'DeleteHardZTPromocion ejecutado sin errores' : 'DeleteLogicZTPromocion ejecutado sin errores';
+        bitacora = AddMSG(bitacora, data, 'OK', 200, true);
+        bitacora.success = true;
         
-        if (!body || !body.filter) {
-          throw new Error('Se requiere filter en el body');
+        return bitacora;
+        
+    } catch (error) {
+        // MANEJO ESPECÍFICO DE ERRORES
+        if (error.message.includes('No se encontró') || error.message.includes('no encontrado')) {
+            data.messageUSR = 'Error al eliminar la promoción - promoción no encontrada';
+            data.messageDEV = error.message;
+            bitacora = AddMSG(bitacora, data, 'FAIL', 404, true);
+        } else {
+            data.messageUSR = 'Error al eliminar la promoción';
+            data.messageDEV = error.message;
+            bitacora = AddMSG(bitacora, data, 'FAIL', 500, true);
         }
-
-        const { filter } = body;
-
-        result = await new Promise(async (resolve, reject) => {
-          try {
-            let deleteResult;
-            
-            if (deleteType === 'logic') {
-              // Con IdPromoOK: usar saveWithAudit
-              if (filter.IdPromoOK) {
-                const updates = {
-                  DELETED: true,
-                  ACTIVED: false
-                };
-                
-                const deletedPromo = await saveWithAudit(
-                  ZTPromociones,
-                  { ...filter, DELETED: false },
-                  updates,
-                  user,
-                  'UPDATE'
-                );
-                
-                deleteResult = {
-                  matchedCount: deletedPromo ? 1 : 0,
-                  modifiedCount: deletedPromo ? 1 : 0
-                };
-              } else {
-                // Sin IdPromoOK: updateMany
-                const updates = {
-                  DELETED: true,
-                  ACTIVED: false,
-                  MODUSER: user,
-                  MODDATE: new Date()
-                };
-
-                deleteResult = await ZTPromociones.updateMany(
-                  { ...filter, DELETED: false },
-                  { $set: updates }
-                );
-              }
-
-              deleteResult.messageUSR = `Eliminadas lógicamente: ${deleteResult.matchedCount} coincidencias, ${deleteResult.modifiedCount} modificadas`;
-              deleteResult.messageDEV = 'Delete logic ejecutado correctamente';
-              
-            } else if (deleteType === 'hard') {
-              // Eliminación física permanente
-              deleteResult = await ZTPromociones.deleteMany(filter);
-
-              deleteResult.messageUSR = `Eliminadas permanentemente: ${deleteResult.deletedCount} registros`;
-              deleteResult.messageDEV = 'Delete hard ejecutado correctamente';
-              
-            } else {
-              reject(new Error('deleteType debe ser "logic" o "hard"'));
-              return;
-            }
-            
-            resolve(deleteResult);
-          } catch (error) {
-            reject(error);
-          }
-        });
-        break;
-        
-      case 'HANA':
-        throw new Error('HANA no implementado');
-      default:
-        throw new Error(`DBServer no soportado: ${dbServer}`);
+        bitacora.success = false;
+        return bitacora;
     }
-    
-    // ============================================
-    // FLUJO EXITOSO: UN SOLO REGISTRO EN BITÁCORA
-    // ============================================
-    const deleteType = params.deleteType || body.deleteType || 'logic';
-    const affectedCount = result.matchedCount || result.deletedCount || 0;
-    const modifiedCount = result.modifiedCount || result.deletedCount || 0;
-    
-    data.dataRes = {
-      deleteType: deleteType,
-      filter: body.filter,
-      affected: affectedCount,
-      modified: modifiedCount
-    };
-    data.countDataRes = modifiedCount;
-    data.messageUSR = result.messageUSR || `Promociones eliminadas exitosamente: ${affectedCount} encontrada(s), ${modifiedCount} ${deleteType === 'logic' ? 'desactivada(s)' : 'eliminada(s)'}`;
-    data.messageDEV = result.messageDEV || `DeleteMany ejecutado correctamente. Tipo: ${deleteType}, Método: ${body.filter.IdPromoOK ? 'saveWithAudit' : 'updateMany/deleteMany'}`;
-    
-    // Registrar resultado exitoso en bitácora (único registro)
-    bitacora = AddMSG(bitacora, data, 'OK', 200, true);
-    bitacora.success = true;
-    
-    return bitacora;
-    
-  } catch (error) {
-    // ============================================
-    // FLUJO CON ERROR: REGISTRAR Y DETENER
-    // ============================================
-    
-    // Determinar tipo de error
-    if (error.message.includes('No se encontr')) {
-      // Error 404: No encontrado
-      data.messageUSR = 'Promociones no encontradas con los filtros especificados';
-      data.messageDEV = `Error en DeleteMany: ${error.message}`;
-      bitacora = AddMSG(bitacora, data, 'FAIL', 404, true);
-    } else {
-      // Error 500: Error de servidor
-      data.messageUSR = 'Error al eliminar promociones';
-      data.messageDEV = `Error en DeleteMany: ${error.message}`;
-      
-      // Incluir stack trace solo en desarrollo
-      if (process.env.NODE_ENV === 'development') { // eslint-disable-line
-        data.stack = error.stack;
-      }
-      
-      bitacora = AddMSG(bitacora, data, 'FAIL', 500, true);
-    }
-    
-    bitacora.success = false;
-    
-    // Marcar como respuesta final para detener ejecución
-    bitacora.finalRes = true;
-    
-    // Log de error
-    console.error('[DeleteMany] ❌ Error:', error.message);
-    
-    return bitacora;
-  }
 }
 
 // ============================================
@@ -999,46 +621,12 @@ async function GetConnectionByDbServer(dbServer) {
 // EXPORTS
 // ============================================
 module.exports = {
-  // Función principal
-  crudZTPromociones,
-  
-  // CRUD básico
-  GetAllZTPromociones,
-  GetOneZTPromocion,
-  DeleteZTPromocionLogic,
-  DeleteZTPromocionHard,
-  ActivateZTPromocion,
-  
-  // Métodos con bitácora
-  GetFiltersPromocionesMethod,
-  AddManyPromocionesMethod,
-  UpdateManyPromocionesMethod,
-  DeleteManyPromocionesMethod,
-  
-  // Utilidades
-  GetConnectionByDbServer,
-  
-  // Legacy (deprecado)
-  ZTPromocionesCRUD: async (req) => {
-    console.warn('[LEGACY] Use crudZTPromociones en lugar de ZTPromocionesCRUD');
-    
-    const legacyParams = req.req?.query || {};
-    const processTypeMap = {
-      'get-all': 'GetFilters',
-      'get-one': 'GetFilters', 
-      'post': 'AddMany',
-      'put': 'UpdateMany',
-      'delete': 'DeleteMany'
-    };
-    
-    if (!req.req) req.req = {};
-    req.req.query = {
-      ProcessType: processTypeMap[`${legacyParams.procedure}${legacyParams.type ? `-${legacyParams.type}` : ''}`] || 'GetFilters',
-      DBServer: legacyParams.DBServer || 'MongoDB',
-      LoggedUser: legacyParams.LoggedUser || 'system_legacy',
-      ...legacyParams
-    };
-    
-    return await crudZTPromociones(req);
-  }
+    crudZTPromociones,
+    GetAllZTPromociones,
+    GetOneZTPromocion,
+    AddOneZTPromocion,
+    UpdateOneZTPromocion,
+    DeleteLogicZTPromocion,
+    DeleteHardZTPromocion,
+    ActivateOneZTPromocion
 };
