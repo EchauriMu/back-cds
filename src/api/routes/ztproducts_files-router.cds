@@ -28,24 +28,4 @@ service ZTProductFilesService @(path:'/api/ztproducts-files') {
     ) returns array of Files;
     
     
-    // GET ALL FILES
-    // POST /api/ztproducts/files/productsFilesCRUD?procedure=get&type=all
-    
-    // GET ONE FILE
-    // POST /api/ztproducts/files/productsFilesCRUD?procedure=get&type=one&fileid=FILE123
-    
-    // CREATE FILE
-    // POST /api/ztproducts/files/productsFilesCRUD?procedure=post
-    
-    // UPDATE FILE
-    // POST /api/ztproducts/files/productsFilesCRUD?procedure=put&fileid=FILE123
-    
-    // DELETE LOGIC
-    // POST /api/ztproducts/files/productsFilesCRUD?procedure=delete&type=logic&fileid=FILE123
-    
-    // DELETE HARD
-    // POST /api/ztproducts/files/productsFilesCRUD?procedure=delete&type=hard&fileid=FILE123
-    
-    // ACTIVATE FILE
-    // POST /api/ztproducts/files/productsFilesCRUD?procedure=activate&fileid=FILE123
 }

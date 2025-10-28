@@ -97,6 +97,22 @@ async function GetOneZTProductFile(fileid) {
 }
 
 // ============================================
+// CRUD: GET FILES BY SKUID
+// ============================================
+async function GetZTProductFilesBySKUID(skuid) {
+  if (!skuid) throw new Error('Falta parámetro SKUID');
+  return await ZTProduct_FILES.find({ SKUID: skuid }).lean();
+}
+
+// ============================================
+// CRUD: GET FILES BY IdPresentaOK
+// ============================================
+async function GetZTProductFilesByIdPresentaOK(idPresentaOK) {
+  if (!idPresentaOK) throw new Error('Falta parámetro IdPresentaOK');
+  return await ZTProduct_FILES.find({ IdPresentaOK: idPresentaOK }).lean();
+}
+
+// ============================================
 // CRUD BÁSICO: DELETE / ACTIVATE
 // ============================================
 async function DeleteZTProductFileLogic(fileid, user) {
@@ -134,7 +150,7 @@ async function ZTProductFilesCRUD(req) {
     const params = req.req?.query || {};
     const body = req.req?.body;
     const paramString = params ? new URLSearchParams(params).toString().trim() : '';
-    const { ProcessType, LoggedUser, DBServer, fileid } = params;
+    const { ProcessType, LoggedUser, DBServer, fileid, skuid } = params;
     
     // 2. VALIDAR PARÁMETROS OBLIGATORIOS
     if (!ProcessType) {
@@ -257,6 +273,38 @@ async function ZTProductFilesCRUD(req) {
           return FAIL(bitacora);
         }
         bitacora = await ActivateOneMethod(bitacora, req, params, fileid, LoggedUser, dbServer);
+        if (!bitacora.success) {
+          bitacora.finalRes = true;
+          return FAIL(bitacora);
+        }
+        break;
+        
+      case 'GetBySKUID':
+        if (!skuid) {
+          data.process = 'Validación de parámetros';
+          data.messageUSR = 'Falta parámetro obligatorio: skuid';
+          data.messageDEV = 'skuid es requerido para la operación GetBySKUID';
+          bitacora = AddMSG(bitacora, data, 'FAIL', 400, true);
+          bitacora.finalRes = true;
+          return FAIL(bitacora);
+        }
+        bitacora = await GetBySKUIDMethod(bitacora, req, params, skuid, dbServer);
+        if (!bitacora.success) {
+          bitacora.finalRes = true;
+          return FAIL(bitacora);
+        }
+        break;
+        
+      case 'GetByIdPresentaOK':
+        if (!params.idPresentaOK) {
+          data.process = 'Validación de parámetros';
+          data.messageUSR = 'Falta parámetro obligatorio: idPresentaOK';
+          data.messageDEV = 'idPresentaOK es requerido para la operación GetByIdPresentaOK';
+          bitacora = AddMSG(bitacora, data, 'FAIL', 400, true);
+          bitacora.finalRes = true;
+          return FAIL(bitacora);
+        }
+        bitacora = await GetByIdPresentaOKMethod(bitacora, req, params, params.idPresentaOK, dbServer);
         if (!bitacora.success) {
           bitacora.finalRes = true;
           return FAIL(bitacora);
@@ -641,6 +689,96 @@ async function ActivateOneMethod(bitacora, req, params, fileid, user, dbServer) 
   }
 }
 
+async function GetBySKUIDMethod(bitacora, req, params, skuid, dbServer) {
+  let data = DATA();
+
+  data.process = 'Obtener archivos por SKUID';
+  data.processType = params.ProcessType || '';
+  data.loggedUser = params.LoggedUser || '';
+  data.dbServer = dbServer;
+  data.server = process.env.SERVER_NAME || '';
+  data.method = req.req?.method || 'No Especificado';
+  data.api = '/api/ztproducts-files/productsFilesCRUD';
+
+  bitacora.processType = params.ProcessType || '';
+  bitacora.loggedUser = params.LoggedUser || '';
+  bitacora.dbServer = dbServer;
+  bitacora.server = process.env.SERVER_NAME || '';
+  bitacora.process = 'Obtener archivos por SKUID';
+
+  try {
+    let files;
+    switch (dbServer) {
+      case 'MongoDB':
+        files = await GetZTProductFilesBySKUID(skuid);
+        break;
+      case 'HANA':
+        throw new Error('HANA no implementado aún para GetBySKUID');
+      default:
+        throw new Error(`DBServer no soportado: ${dbServer}`);
+    }
+
+    data.dataRes = files;
+    data.messageUSR = 'Archivos obtenidos correctamente por SKUID';
+    data.messageDEV = 'GetZTProductFilesBySKUID ejecutado sin errores';
+    bitacora = AddMSG(bitacora, data, 'OK', 200, true);
+    bitacora.success = true;
+    return bitacora;
+
+  } catch (error) {
+    data.messageUSR = 'Error al obtener los archivos por SKUID';
+    data.messageDEV = error.message;
+    bitacora = AddMSG(bitacora, data, 'FAIL', 500, true);
+    bitacora.success = false;
+    return bitacora;
+  }
+}
+
+async function GetByIdPresentaOKMethod(bitacora, req, params, idPresentaOK, dbServer) {
+  let data = DATA();
+
+  data.process = 'Obtener archivos por IdPresentaOK';
+  data.processType = params.ProcessType || '';
+  data.loggedUser = params.LoggedUser || '';
+  data.dbServer = dbServer;
+  data.server = process.env.SERVER_NAME || '';
+  data.method = req.req?.method || 'No Especificado';
+  data.api = '/api/ztproducts-files/productsFilesCRUD';
+
+  bitacora.processType = params.ProcessType || '';
+  bitacora.loggedUser = params.LoggedUser || '';
+  bitacora.dbServer = dbServer;
+  bitacora.server = process.env.SERVER_NAME || '';
+  bitacora.process = 'Obtener archivos por IdPresentaOK';
+
+  try {
+    let files;
+    switch (dbServer) {
+      case 'MongoDB':
+        files = await GetZTProductFilesByIdPresentaOK(idPresentaOK);
+        break;
+      case 'HANA':
+        throw new Error('HANA no implementado aún para GetByIdPresentaOK');
+      default:
+        throw new Error(`DBServer no soportado: ${dbServer}`);
+    }
+
+    data.dataRes = files;
+    data.messageUSR = 'Archivos obtenidos correctamente por IdPresentaOK';
+    data.messageDEV = 'GetZTProductFilesByIdPresentaOK ejecutado sin errores';
+    bitacora = AddMSG(bitacora, data, 'OK', 200, true);
+    bitacora.success = true;
+    return bitacora;
+
+  } catch (error) {
+    data.messageUSR = 'Error al obtener los archivos por IdPresentaOK';
+    data.messageDEV = error.message;
+    bitacora = AddMSG(bitacora, data, 'FAIL', 500, true);
+    bitacora.success = false;
+    return bitacora;
+  }
+}
+
 // ============================================
 // EXPORTS
 // ============================================
@@ -651,5 +789,7 @@ module.exports = {
   DeleteZTProductFileLogic,
   DeleteZTProductFileHard,
   ActivateZTProductFile,
-  ZTProductFilesUploadHandler
+  ZTProductFilesUploadHandler,
+  GetZTProductFilesBySKUID,
+  GetZTProductFilesByIdPresentaOK // <-- Exporta la nueva función
 };
