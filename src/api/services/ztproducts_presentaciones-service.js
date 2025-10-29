@@ -91,6 +91,14 @@ async function ActivateOneZTProductsPresentacion(idpresentaok, user) {
 }
 
 // ============================================
+// CRUD: GET PRESENTACIONES BY SKUID
+// ============================================
+async function GetZTProductsPresentacionesBySKUID(skuid) {
+  if (!skuid) throw new Error('Falta parámetro SKUID');
+  return await ZTProducts_Presentaciones.find({ SKUID: skuid, DELETED: { $ne: true } }).lean();
+}
+
+// ============================================
 // MÉTODOS LOCALES CON BITÁCORA (mismo estilo amigo)
 // ============================================
 async function GetAllMethod(bitacora, req, params, paramString, body, dbServer) {
@@ -422,6 +430,50 @@ async function ActivateOneMethod(bitacora, params, idpresentaok, user, dbServer)
   }
 }
 
+async function GetBySKUIDMethod(bitacora, req, params, skuid, dbServer) {
+  let data = DATA();
+
+  data.process = 'Obtener presentaciones por SKUID';
+  data.processType = params.ProcessType || '';
+  data.loggedUser = params.LoggedUser || '';
+  data.dbServer = dbServer;
+  data.server = process.env.SERVER_NAME || '';
+  data.method = req.req?.method || 'No Especificado';
+  data.api = '/api/ztproducts-presentaciones/productsPresentacionesCRUD';
+
+  bitacora.processType = params.ProcessType || '';
+  bitacora.loggedUser = params.LoggedUser || '';
+  bitacora.dbServer = dbServer;
+  bitacora.server = process.env.SERVER_NAME || '';
+  bitacora.process = 'Obtener presentaciones por SKUID';
+
+  try {
+    let files;
+    switch (dbServer) {
+      case 'MongoDB':
+        files = await GetZTProductsPresentacionesBySKUID(skuid);
+        break;
+      case 'HANA':
+        throw new Error('HANA no implementado aún para GetBySKUID');
+      default:
+        throw new Error(`DBServer no soportado: ${dbServer}`);
+    }
+
+    data.dataRes = files;
+    data.messageUSR = 'Presentaciones obtenidas correctamente por SKUID';
+    data.messageDEV = 'GetZTProductsPresentacionesBySKUID ejecutado sin errores';
+    bitacora = AddMSG(bitacora, data, 'OK', 200, true);
+    bitacora.success = true;
+    return bitacora;
+  } catch (error) {
+    data.messageUSR = 'Error al obtener las presentaciones por SKUID';
+    data.messageDEV = error.message;
+    bitacora = AddMSG(bitacora, data, 'FAIL', 500, true);
+    bitacora.success = false;
+    return bitacora;
+  }
+}
+
 // ============================================
 // ORQUESTADOR PRINCIPAL (CAP Action)
 //    ProcessType: GetAll | GetOne | AddOne | UpdateOne | DeleteLogic | DeleteHard | ActivateOne
@@ -550,6 +602,20 @@ async function ZTProductsPresentacionesCRUD(req) {
         break;
       }
 
+      case 'GetBySKUID': {
+        if (!params.skuid) {
+          data.process     = 'Validación de parámetros';
+          data.messageUSR  = 'Falta parámetro obligatorio: skuid';
+          data.messageDEV  = 'skuid es requerido para la operación GetBySKUID';
+          bitacora = AddMSG(bitacora, data, 'FAIL', 400, true);
+          bitacora.finalRes = true;
+          return FAIL(bitacora);
+        }
+        bitacora = await GetBySKUIDMethod(bitacora, req, params, params.skuid, dbServer);
+        if (!bitacora.success) { bitacora.finalRes = true; return FAIL(bitacora); }
+        break;
+      }
+
       default: {
         data.process     = 'Validación de ProcessType';
         data.messageUSR  = 'ProcessType inválido o no especificado';
@@ -594,13 +660,12 @@ async function ZTProductsPresentacionesCRUD(req) {
 // ============================================
 module.exports = {
   ZTProductsPresentacionesCRUD,
-
-  // utilidades / helpers para uso interno o pruebas
   GetAllZTProductsPresentaciones,
   GetOneZTProductsPresentacion,
   AddOneZTProductsPresentacion,
   UpdateOneZTProductsPresentacion,
   DeleteLogicZTProductsPresentacion,
   DeleteHardZTProductsPresentacion,
-  ActivateOneZTProductsPresentacion
+  ActivateOneZTProductsPresentacion,
+  GetZTProductsPresentacionesBySKUID
 };
