@@ -18,10 +18,20 @@ const ZTProductSchema = new mongoose.Schema({
     unique: true,   // Identificador único
     trim: true 
   },
+  PRODUCTNAME: { 
+    type: String, 
+    required: true, 
+    trim: true 
+  },
   DESSKU: { 
     type: String, 
     required: true, 
     trim: true 
+  },
+  MARCA: {
+    type: String,
+    trim: true,
+    default: ''
   },
   CATEGORIAS: [{ type: String, ref: "ZTCATEGORIAS" }],
 

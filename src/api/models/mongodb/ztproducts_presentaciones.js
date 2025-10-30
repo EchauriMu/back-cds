@@ -29,10 +29,16 @@ const ZTPRODUCTS_PRESENTACIONES = new mongoose.Schema(
       required: true,
       trim: true,
     },
-    CostoIni: { type: Number, required: true, default: 0 },
-    CostoFin: { type: Number, required: true, default: 0 },
-    Precio:   { type: Number, required: true, default: 0 },
-    Stock:    { type: Number, required: true, default: 0 },
+    PropiedadesExtras: {
+      type: Map,
+      of: String,
+      default: {},
+    },
+
+    // Ya no se usan en la creación, pero se mantienen por si hay datos históricos.
+    // Precio: { type: Number },
+    // Stock: { type: Number },
+
 
     ACTIVED:  { type: Boolean, default: true },
     DELETED:  { type: Boolean, default: false },

@@ -47,6 +47,7 @@ async function AddOneZTProductsPresentacion(payload, user) {
     CostoFin     : payload.CostoFin ?? 0,
     Precio       : payload.Precio,
     Stock        : payload.Stock ?? 0,
+    PropiedadesExtras: payload.PropiedadesExtras || {},
     ACTIVED      : payload.ACTIVED ?? true,
     DELETED      : payload.DELETED ?? false,
     // REGUSER y REGDATE los setea saveWithAudit en CREATE

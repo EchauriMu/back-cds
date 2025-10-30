@@ -41,16 +41,17 @@ async function AddOneZTProduct(payload, user) {
 
   // Defaults
   const data = {
-    SKUID           : payload.SKUID,
-    DESSKU          : payload.DESSKU,
-    CATEGORIAS      : payload.CATEGORIAS || [],
+    SKUID: payload.SKUID,
+    PRODUCTNAME: payload.PRODUCTNAME,
+    DESSKU: payload.DESSKU,
+    MARCA: payload.MARCA || '',
+    CATEGORIAS: payload.CATEGORIAS || [],
     IDUNIDADMEDIDA  : payload.IDUNIDADMEDIDA,
     BARCODE         : payload.BARCODE || '',
     INFOAD          : payload.INFOAD || '',
     ACTIVED         : payload.ACTIVED ?? true,
     DELETED         : payload.DELETED ?? false,
-    CREATED_AT      : new Date(),
-    UPDATED_AT      : new Date()
+    // Los timestamps son manejados por Mongoose
   };
 
   // Usa helper con auditoría (CREATE dispara pre('save') y llena HISTORY)
@@ -63,10 +64,7 @@ async function UpdateOneZTProduct(skuid, cambios, user) {
   if (!cambios || Object.keys(cambios).length === 0) throw new Error('No se enviaron datos para actualizar');
 
   const filter = { SKUID: skuid, ACTIVED: true, DELETED: false };
-  const updateData = {
-    ...cambios,
-    UPDATED_AT: new Date()
-  };
+  const updateData = { ...cambios };
   // saveWithAudit asigna MODUSER/MODDATE y triggerá pre('save') para HISTORY
   const updated = await saveWithAudit(ZTProduct, filter, updateData, user, 'UPDATE');
   return updated;
@@ -75,7 +73,7 @@ async function UpdateOneZTProduct(skuid, cambios, user) {
 async function DeleteLogicZTProduct(skuid, user) {
   if (!skuid) throw new Error('Falta parámetro SKUID');
   const filter = { SKUID: skuid, ACTIVED: true, DELETED: false };
-  const data   = { ACTIVED: false, DELETED: true, DELETED_AT: new Date(), UPDATED_AT: new Date() };
+  const data   = { ACTIVED: false, DELETED: true };
   const res = await saveWithAudit(ZTProduct, filter, data, user, 'UPDATE');
   return res;
 }
@@ -90,7 +88,7 @@ async function DeleteHardZTProduct(skuid) {
 async function ActivateOneZTProduct(skuid, user) {
   if (!skuid) throw new Error('Falta parámetro SKUID');
   const filter = { SKUID: skuid };
-  const data   = { ACTIVED: true, DELETED: false, UPDATED_AT: new Date() };
+  const data   = { ACTIVED: true, DELETED: false };
   const res = await saveWithAudit(ZTProduct, filter, data, user, 'UPDATE');
   return res;
 }
