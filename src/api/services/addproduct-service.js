@@ -17,24 +17,6 @@ function getPayload(req) {
 }
 
 // ============================================
-// UTIL: GENERAR SKUID AUTOMÁTICAMENTE
-// ============================================
-function generateSkuFromProductName(productName) {
-  if (!productName || typeof productName !== 'string' || productName.trim() === '') {
-    // Si no hay productName, genera uno aleatorio
-    return `SKU-${Date.now().toString(36).toUpperCase()}`;
-  }
-
-  const base = productName
-    .normalize("NFD").replace(/[\u0300-\u036f]/g, "") // Quitar acentos
-    .toUpperCase()
-    .replace(/[^A-Z0-9\s-]/g, '') // Quitar caracteres especiales
-    .trim()
-    .replace(/\s+/g, '-'); // Reemplazar espacios con guiones
-
-  return `${base.slice(0, 40)}-${Date.now().toString(36).toUpperCase()}`;
-}
-// ============================================
 // SERVICIO PRINCIPAL
 // ============================================
 async function addProductWithPresentations(req) {
@@ -80,19 +62,16 @@ async function addProductWithPresentations(req) {
     let createdProduct;
     try {
       // --- Lógica de AddOneZTProduct integrada ---
-      const required = ['PRODUCTNAME', 'DESSKU', 'IDUNIDADMEDIDA']; // SKUID ya no es requerido en el payload
+      const required = ['SKUID', 'PRODUCTNAME', 'DESSKU', 'IDUNIDADMEDIDA'];
       const missing = required.filter((k) => !product[k]);
       if (missing.length) throw new Error(`Faltan campos obligatorios en el producto: ${missing.join(', ')}`);
 
-      // Generar el SKUID automáticamente
-      const generatedSku = generateSkuFromProductName(product.PRODUCTNAME);
-
-      // La validación de existencia ahora es interna y muy improbable que falle, pero es una buena práctica.
-      const exists = await ZTProduct.findOne({ SKUID: generatedSku }).lean();
-      if (exists) throw new Error(`Conflicto al generar SKUID único. Intente de nuevo.`);
+      // Validar que el SKUID no exista
+      const exists = await ZTProduct.findOne({ SKUID: product.SKUID }).lean();
+      if (exists) throw new Error(`Ya existe un producto con el SKUID: ${product.SKUID}`);
 
       const productData = {
-        SKUID: generatedSku, // Usar el SKUID generado
+        SKUID: product.SKUID,
         PRODUCTNAME: product.PRODUCTNAME,
         DESSKU: product.DESSKU,
         MARCA: product.MARCA || '',
@@ -138,9 +117,9 @@ async function addProductWithPresentations(req) {
           const presentationData = {
             IdPresentaOK: pres.IdPresentaOK,
             SKUID: createdProduct.SKUID, // Se asocia al producto padre ya creado
-            NOMBREPRESENTACION: pres.NOMBREPRESENTACION,
+            NOMBREPRESENTACION: pres.NOMBREPRESENTACION, // Se toma directamente del payload
             Descripcion: pres.Descripcion,
-            PropiedadesExtras: propiedades,
+            PropiedadesExtras: propiedades, // Se asigna el objeto JSON ya parseado
           };
 
           const newPresentation = await saveWithAudit(ZTProducts_Presentaciones, {}, presentationData, LoggedUser, 'CREATE');

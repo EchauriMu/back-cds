@@ -2,6 +2,7 @@ namespace addproduct_def;
 
 // Estructura para los datos del producto
 type ProductData {
+    SKUID          : String(100);
     PRODUCTNAME    : String(255);
     DESSKU         : String(255);
     MARCA          : String(100);
