@@ -14,11 +14,9 @@ service ZTProductsPresentacionesService @(path:'/api/ztproducts-presentaciones')
     ProcessType    : String,          // AddOne | GetAll | GetOne | UpdateOne | Delete | Activate ...
     IdPresentaOK   : String,
     SKUID          : String,
+    NOMBREPRESENTACION : String,
     Descripcion    : String,
-    CostoIni       : Decimal(15,2),
-    CostoFin       : Decimal(15,2),
-    Precio         : Decimal(15,2),
-    Stock          : Integer,
+   
     ACTIVED        : Boolean,
     DELETED        : Boolean,
     REGUSER        : String

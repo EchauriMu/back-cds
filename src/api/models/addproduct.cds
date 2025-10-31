@@ -24,8 +24,8 @@ type FileData {
 // Estructura para los datos de una presentación
 type PresentationData {
     IdPresentaOK : String(100);
+    NOMBREPRESENTACION : String(255);
     Descripcion  : String(255);
-    CostoIni     : Decimal;
     PropiedadesExtras : LargeString; // Representa un objeto JSON como string
     files        : many FileData;
 }

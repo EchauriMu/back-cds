@@ -30,7 +30,7 @@ async function GetOneZTProductsPresentacion(idpresentaok) {
 async function AddOneZTProductsPresentacion(payload, user) {
   if (!payload) throw new Error('No se recibió payload. Verifica Content-Type: application/json');
 
-  const required = ['IdPresentaOK', 'SKUID', 'Descripcion', 'Precio'];
+  const required = ['IdPresentaOK', 'SKUID', 'NOMBREPRESENTACION', 'Descripcion'];
   const missing = required.filter((k) => payload[k] === undefined || payload[k] === null || payload[k] === '');
   if (missing.length) throw new Error(`Faltan campos obligatorios: ${missing.join(', ')}`);
 
@@ -42,11 +42,10 @@ async function AddOneZTProductsPresentacion(payload, user) {
   const data = {
     IdPresentaOK : payload.IdPresentaOK,
     SKUID        : payload.SKUID,
+    NOMBREPRESENTACION: payload.NOMBREPRESENTACION,
     Descripcion  : payload.Descripcion,
     CostoIni     : payload.CostoIni ?? 0,
     CostoFin     : payload.CostoFin ?? 0,
-    Precio       : payload.Precio,
-    Stock        : payload.Stock ?? 0,
     PropiedadesExtras: payload.PropiedadesExtras || {},
     ACTIVED      : payload.ACTIVED ?? true,
     DELETED      : payload.DELETED ?? false,

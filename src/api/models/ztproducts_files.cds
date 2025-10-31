@@ -7,7 +7,7 @@ entity ZTPRODUCTS_FILES {
       FILETYPE     : String(16);
       FILE         : String;
       PRINCIPAL    : Boolean;
-      SECUENCE     : Integer;
+
       INFOAD       : String;
       REGUSER      : String(64);
       REGDATE      : DateTime;

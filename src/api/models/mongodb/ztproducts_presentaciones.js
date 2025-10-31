@@ -24,6 +24,11 @@ const ZTPRODUCTS_PRESENTACIONES = new mongoose.Schema(
       trim: true,
       ref: "ZTPRODUCTS",
     },
+   NOMBREPRESENTACION: {
+      type: String,
+      required: true,
+      trim: true,
+    },
     Descripcion: {
       type: String,
       required: true,

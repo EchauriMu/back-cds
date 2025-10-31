@@ -119,7 +119,7 @@ async function addProductWithPresentations(req) {
       for (const pres of presentations) {
         try {
           // --- Lógica de AddOneZTProductsPresentacion integrada ---
-          const requiredPres = ['IdPresentaOK', 'Descripcion'];
+          const requiredPres = ['IdPresentaOK', 'NOMBREPRESENTACION', 'Descripcion'];
           const missingPres = requiredPres.filter((k) => !pres[k]);
           if (missingPres.length) throw new Error(`Faltan campos obligatorios en la presentación '${pres.IdPresentaOK || ''}': ${missingPres.join(', ')}`);
 
@@ -138,8 +138,8 @@ async function addProductWithPresentations(req) {
           const presentationData = {
             IdPresentaOK: pres.IdPresentaOK,
             SKUID: createdProduct.SKUID, // Se asocia al producto padre ya creado
+            NOMBREPRESENTACION: pres.NOMBREPRESENTACION,
             Descripcion: pres.Descripcion,
-            CostoIni: pres.CostoIni ?? 0,
             PropiedadesExtras: propiedades,
           };
 
@@ -163,10 +163,13 @@ async function addProductWithPresentations(req) {
               };
 
               // 2. Preparar el objeto 'body' para el helper
+              // Se mapean explícitamente los campos del modelo para evitar pasar propiedades no deseadas.
               const bodyForHelper = {
                 SKUID: createdProduct.SKUID,
                 IdPresentaOK: pres.IdPresentaOK, // Asociar archivo a la presentación
-                ...restOfFile
+                FILETYPE: file.FILETYPE,
+                PRINCIPAL: file.PRINCIPAL,
+                INFOAD: file.INFOAD,
               };
 
               // 3. Llamar al helper con los 3 argumentos correctos
