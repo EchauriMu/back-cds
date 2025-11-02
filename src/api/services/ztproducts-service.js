@@ -1,9 +1,10 @@
 // Servicio para ZTPRODUCTS (productos)
 const mongoose = require('mongoose');
 const ZTProduct = require('../models/mongodb/ztproducts');
+const { cosmosConnection } = require('../../config/connectToMongoDB.config');
 
 //FIC: Imports fuctions/methods
-const {OK, FAIL, BITACORA, DATA, AddMSG} = require('../../middlewares/respPWA.handler');
+const { OK, FAIL, BITACORA, DATA, AddMSG } = require('../../middlewares/respPWA.handler');
 const { saveWithAudit } = require('../../helpers/audit-timestap');
 
 // ============================================
@@ -17,8 +18,8 @@ function getPayload(req) {
 // CRUD BÁSICO (MONGO PURO) - Capa 1
 // ============================================
 async function GetAllZTProducts() {
-  // Por defecto excluimos borrados lógicos y productos inactivos
-  return await ZTProduct.find({ ACTIVED: true, DELETED: false }).lean();
+  
+  return await ZTProduct.find({}).lean();
 }
 
 async function GetOneZTProduct(skuid) {
@@ -324,8 +325,15 @@ async function GetProductMethod(bitacora, params, paramString, body, dbServer) {
                 case 'MongoDB':
                     productos = await GetAllZTProducts();
                     break;
-                case 'HANA':
-                    throw new Error('HANA no implementado aún para GetAll');
+                case 'CosmosDB':
+                    // Compilamos el modelo sobre la conexión de Cosmos DB al vuelo.
+                    // Se añade el tercer argumento 'ZTPRODUCTS' para forzar el nombre de la colección
+         
+                  // El primer argumento 'ZTProductCosmos' es un nombre único para este modelo en
+                  //  esta conexión POR QUE NO SE PUEDE COMPARTIR LA DE LA CONEXION POR DEFECTO QUE ES ATLAS
+                    const ZTProductCosmos = cosmosConnection.model('ZTProductCosmos', ZTProduct.schema, 'ZTPRODUCTS');
+                    productos = await ZTProductCosmos.find({}).lean(); 
+                    break;
                 default:
                     throw new Error(`DBServer no soportado: ${dbServer}`);
             }
