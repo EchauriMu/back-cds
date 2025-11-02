@@ -1,5 +1,14 @@
 namespace mongodb;
 
+type FileData {
+    fileBase64   : LargeString;
+    FILETYPE     : String(10); // IMG, PDF, etc.
+    originalname : String(255);
+    mimetype     : String(100);
+    PRINCIPAL    : Boolean;
+    INFOAD       : String(255);
+}
+
 entity ZTPRODUCTS_PRESENTACIONES {
   key IdPresentaOK : String(64);
       NOMBREPRESENTACION : String;
@@ -14,4 +23,6 @@ entity ZTPRODUCTS_PRESENTACIONES {
       MODDATE      : DateTime;
       createdAt    : DateTime;
       updatedAt    : DateTime;
+      PropiedadesExtras : LargeString;
+      files        : many FileData;
 }

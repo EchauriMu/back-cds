@@ -2,6 +2,8 @@
 // IMPORTS
 // ============================================
 const { ZTProducts_Presentaciones } = require('../models/mongodb/ztproducts_presentaciones');
+const { ZTProduct_FILES } = require('../models/mongodb/ztproducts_files');
+const { handleUploadZTProductFileCDS } = require('../../helpers/azureUpload.helper');
 const { OK, FAIL, BITACORA, DATA, AddMSG } = require('../../middlewares/respPWA.handler');
 const { saveWithAudit } = require('../../helpers/audit-timestap');
 
@@ -9,6 +11,7 @@ const { saveWithAudit } = require('../../helpers/audit-timestap');
 // UTIL: OBTENER PAYLOAD DESDE CDS/EXPRESS
 // ============================================
 function getPayload(req) {
+  // Si la acción no tiene parámetros definidos, CAP pone todo el body en req.data
   return req.data || req.req?.body || null;
 }
 
@@ -30,31 +33,95 @@ async function GetOneZTProductsPresentacion(idpresentaok) {
 async function AddOneZTProductsPresentacion(payload, user) {
   if (!payload) throw new Error('No se recibió payload. Verifica Content-Type: application/json');
 
+  const { files, ...presentationPayload } = payload;
+
   const required = ['IdPresentaOK', 'SKUID', 'NOMBREPRESENTACION', 'Descripcion'];
-  const missing = required.filter((k) => payload[k] === undefined || payload[k] === null || payload[k] === '');
-  if (missing.length) throw new Error(`Faltan campos obligatorios: ${missing.join(', ')}`);
+  const missing = required.filter((k) => !presentationPayload[k]);
+  if (missing.length) throw new Error(`Faltan campos obligatorios en la presentación: ${missing.join(', ')}`);
 
-  // evitar duplicados
-  const exists = await ZTProducts_Presentaciones.findOne({ IdPresentaOK: payload.IdPresentaOK }).lean();
-  if (exists) throw new Error('Ya existe una presentación con ese IdPresentaOK');
+  const exists = await ZTProducts_Presentaciones.findOne({ IdPresentaOK: presentationPayload.IdPresentaOK }).lean();
+  if (exists) throw new Error(`Ya existe una presentación con el IdPresentaOK: ${presentationPayload.IdPresentaOK}`);
 
-  // defaults
-  const data = {
-    IdPresentaOK : payload.IdPresentaOK,
-    SKUID        : payload.SKUID,
-    NOMBREPRESENTACION: payload.NOMBREPRESENTACION,
-    Descripcion  : payload.Descripcion,
-    CostoIni     : payload.CostoIni ?? 0,
-    CostoFin     : payload.CostoFin ?? 0,
-    PropiedadesExtras: payload.PropiedadesExtras || {},
-    ACTIVED      : payload.ACTIVED ?? true,
-    DELETED      : payload.DELETED ?? false,
-    // REGUSER y REGDATE los setea saveWithAudit en CREATE
-  };
+  let createdPresentation;
+  const createdFilesInfo = [];
 
-  // usa helper con auditoría (CREATE dispara pre('save') y llena HISTORY)
-  const created = await saveWithAudit(ZTProducts_Presentaciones, {}, data, user, 'CREATE');
-  return created;
+  try {
+    // 1. CREAR LA PRESENTACIÓN
+    let propiedades = {};
+    if (typeof presentationPayload.PropiedadesExtras === 'string' && presentationPayload.PropiedadesExtras.trim() !== '') {
+      try {
+        propiedades = JSON.parse(presentationPayload.PropiedadesExtras);
+      } catch (jsonError) {
+        throw new Error(`El formato de PropiedadesExtras no es un JSON válido.`);
+      }
+    }
+
+    const presentationData = {
+      IdPresentaOK: presentationPayload.IdPresentaOK,
+      SKUID: presentationPayload.SKUID,
+      NOMBREPRESENTACION: presentationPayload.NOMBREPRESENTACION,
+      Descripcion: presentationPayload.Descripcion,
+      PropiedadesExtras: propiedades,
+      ACTIVED: presentationPayload.ACTIVED ?? true,
+      DELETED: presentationPayload.DELETED ?? false,
+    };
+
+    createdPresentation = await saveWithAudit(ZTProducts_Presentaciones, {}, presentationData, user, 'CREATE');
+
+    // 2. SUBIR ARCHIVOS (SI EXISTEN)
+    if (files && files.length > 0) {
+      for (const file of files) {
+        const { fileBase64, originalname, mimetype, ...restOfFile } = file;
+
+        if (!fileBase64 || !originalname || !mimetype) {
+          throw new Error('Cada archivo debe tener fileBase64, originalname y mimetype.');
+        }
+
+        const cleanBase64 = fileBase64.replace(/^data:([A-Za-z-+\/]+);base64,/, '').replace(/\r?\n|\r/g, '');
+        const fileBuffer = Buffer.from(cleanBase64, 'base64');
+        const fileForHelper = {
+          buffer: fileBuffer,
+          originalname,
+          mimetype,
+        };
+
+        const bodyForHelper = {
+          SKUID: createdPresentation.SKUID,
+          IdPresentaOK: createdPresentation.IdPresentaOK,
+          ...restOfFile,
+        };
+
+        const uploadResult = await handleUploadZTProductFileCDS(fileForHelper, bodyForHelper, user);
+
+        if (uploadResult.error || uploadResult.status >= 400) {
+          throw new Error(uploadResult.message || uploadResult.data?.error || 'Error al subir archivo a Azure.');
+        }
+        createdFilesInfo.push(uploadResult.data);
+      }
+    }
+
+    // 3. RESPUESTA EXITOSA
+    return {
+      presentation: createdPresentation,
+      files: createdFilesInfo,
+    };
+
+  } catch (error) {
+    // -- INICIO DE ROLLBACK --
+    // Si algo falla, eliminamos todo lo que se creó en esta operación.
+    if (createdPresentation) {
+      await ZTProducts_Presentaciones.deleteOne({ _id: createdPresentation._id });
+    }
+    if (createdFilesInfo.length > 0) {
+      const fileIdsToDelete = createdFilesInfo.map(f => f.file.FILEID);
+      await ZTProduct_FILES.deleteMany({ FILEID: { $in: fileIdsToDelete } });
+      // TODO: En un futuro, se podría añadir la lógica para borrar los archivos de Azure.
+    }
+    // -- FIN DE ROLLBACK --
+
+    // Re-lanzar el error para que sea capturado por el método que lo llamó (AddOneMethod)
+    throw new Error(`Error en AddOneZTProductsPresentacion: ${error.message}`);
+  }
 }
 
 async function UpdateOneZTProductsPresentacion(idpresentaok, cambios, user) {
@@ -193,7 +260,7 @@ async function GetOneMethod(bitacora, params, idpresentaok, dbServer) {
   }
 }
 
-async function AddOneMethod(bitacora, params, body, req, dbServer) {
+async function AddOneMethod(bitacora, params, req, dbServer) {
   let data = DATA();
 
   data.process      = 'Agregar presentación';
@@ -485,8 +552,7 @@ async function ZTProductsPresentacionesCRUD(req) {
 
   try {
     // 1. PARAMS
-    const params = req.req?.query || {};
-    const body   = req.req?.body;
+    const params = req.req?.query || {};    
     const paramString = params ? new URLSearchParams(params).toString().trim() : '';
     const { ProcessType, LoggedUser, DBServer, idpresentaok } = params;
 
@@ -521,7 +587,7 @@ async function ZTProductsPresentacionesCRUD(req) {
     // 4. ROUTING POR PROCESSTYPE
     switch (ProcessType) {
       case 'GetAll': {
-        bitacora = await GetAllMethod(bitacora, req, params, paramString, body, dbServer);
+        bitacora = await GetAllMethod(bitacora, req, params, paramString, dbServer);
         if (!bitacora.success) { bitacora.finalRes = true; return FAIL(bitacora); }
         break;
       }
@@ -541,7 +607,7 @@ async function ZTProductsPresentacionesCRUD(req) {
       }
 
       case 'AddOne': {
-        bitacora = await AddOneMethod(bitacora, params, body, req, dbServer);
+        bitacora = await AddOneMethod(bitacora, params, req, dbServer);
         if (!bitacora.success) { bitacora.finalRes = true; return FAIL(bitacora); }
         break;
       }

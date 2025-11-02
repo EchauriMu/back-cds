@@ -3,8 +3,7 @@ using { mongodb as myur } from '../models/ztproducts_presentaciones';
 @impl: 'src/api/controllers/ztproducts_presentaciones-controller.js'
 
 service ZTProductsPresentacionesService @(path:'/api/ztproducts-presentaciones') {
-
-  // ===== Entidad básica =====
+    // ===== Entidad básica =====
   entity Presentaciones as projection on myur.ZTPRODUCTS_PRESENTACIONES;
 
   // ===== CRUD de Presentaciones de Productos =====
@@ -19,7 +18,9 @@ service ZTProductsPresentacionesService @(path:'/api/ztproducts-presentaciones')
    
     ACTIVED        : Boolean,
     DELETED        : Boolean,
-    REGUSER        : String
+    REGUSER        : String,
+    PropiedadesExtras : LargeString,
+    files          : many myur.FileData      // <-- Usamos el alias 'myur' para referenciar a FileData
     // Nota: MODUSER/MODDATE los rellena tu helper/update; no hace falta exponerlos aquí
   ) returns array of Presentaciones;
 
