@@ -85,6 +85,11 @@ async function ActivateOneZTPreciosItem(IdPrecioOK, user) {
   return res;
 }
 
+async function GetZTPreciosItemsByIdPresentaOK(idPresentaOK) {
+  if (!idPresentaOK) throw new Error('Falta parámetro IdPresentaOK');
+  return await ZTPrecios_ITEMS.find({ IdPresentaOK: idPresentaOK, DELETED: { $ne: true } }).lean();
+}
+
 // ============================================
 // MÉTODOS con BITÁCORA (estilo amigo)
 // ============================================
@@ -379,6 +384,48 @@ async function ActivateOneMethod(bitacora, params, IdPrecioOK, user, dbServer) {
   }
 }
 
+async function GetByIdPresentaOKMethod(bitacora, req, params, idPresentaOK, dbServer) {
+  let data = DATA();
+
+  data.process = 'Obtener precios por IdPresentaOK';
+  data.processType = params.ProcessType || '';
+  data.loggedUser = params.LoggedUser || '';
+  data.dbServer = dbServer;
+  data.server = process.env.SERVER_NAME || '';
+  data.method = req.req?.method || 'No Especificado';
+  data.api = '/api/ztprecios-items/preciosItemsCRUD';
+
+  bitacora.processType = params.ProcessType || '';
+  bitacora.loggedUser = params.LoggedUser || '';
+  bitacora.dbServer = dbServer;
+  bitacora.server = process.env.SERVER_NAME || '';
+  bitacora.process = 'Obtener precios por IdPresentaOK';
+
+  try {
+    let items;
+    switch (dbServer) {
+      case 'MongoDB':
+        items = await GetZTPreciosItemsByIdPresentaOK(idPresentaOK);
+        break;
+      default:
+        throw new Error(`DBServer no soportado: ${dbServer}`);
+    }
+
+    data.dataRes = items;
+    data.messageUSR = 'Precios obtenidos correctamente por Presentación';
+    data.messageDEV = 'GetZTPreciosItemsByIdPresentaOK ejecutado sin errores';
+    bitacora = AddMSG(bitacora, data, 'OK', 200, true);
+    bitacora.success = true;
+    return bitacora;
+  } catch (error) {
+    data.messageUSR = 'Error al obtener los precios por Presentación';
+    data.messageDEV = error.message;
+    bitacora = AddMSG(bitacora, data, 'FAIL', 500, true);
+    bitacora.success = false;
+    return bitacora;
+  }
+}
+
 // ============================================
 // ORQUESTADOR PRINCIPAL (CAP Action)
 //    ProcessType: GetAll | GetOne | AddOne | UpdateOne | DeleteLogic | DeleteHard | ActivateOne
@@ -392,12 +439,12 @@ async function ZTPreciosItemsCRUD(req) {
     const params = req.req?.query || {};
     const body = req.req?.body;
     const paramString = params ? new URLSearchParams(params).toString().trim() : '';
-    const { ProcessType, LoggedUser, DBServer, IdPrecioOK } = params;
+    const { ProcessType, LoggedUser, DBServer, IdPrecioOK, idPresentaOK } = params;
 
     if (!ProcessType) {
       data.process = 'Validación de parámetros obligatorios';
       data.messageUSR = 'Falta parámetro obligatorio: ProcessType';
-      data.messageDEV = 'Valores válidos: GetAll, GetOne, AddOne, UpdateOne, DeleteLogic, DeleteHard, ActivateOne';
+      data.messageDEV = 'Valores válidos: GetAll, GetOne, GetByIdPresentaOK, AddOne, UpdateOne, DeleteLogic, DeleteHard, ActivateOne';
       bitacora = AddMSG(bitacora, data, 'FAIL', 400, true);
       bitacora.finalRes = true;
       return FAIL(bitacora);
@@ -496,10 +543,23 @@ async function ZTPreciosItemsCRUD(req) {
         if (!bitacora.success) { bitacora.finalRes = true; return FAIL(bitacora); }
         break;
 
+      case 'GetByIdPresentaOK':
+        if (!idPresentaOK) {
+          data.process = 'Validación de parámetros';
+          data.messageUSR = 'Falta parámetro obligatorio: idPresentaOK';
+          data.messageDEV = 'idPresentaOK es requerido para GetByIdPresentaOK';
+          bitacora = AddMSG(bitacora, data, 'FAIL', 400, true);
+          bitacora.finalRes = true;
+          return FAIL(bitacora);
+        }
+        bitacora = await GetByIdPresentaOKMethod(bitacora, req, params, idPresentaOK, dbServer);
+        if (!bitacora.success) { bitacora.finalRes = true; return FAIL(bitacora); }
+        break;
+
       default:
         data.process = 'Validación de ProcessType';
         data.messageUSR = 'ProcessType inválido o no especificado';
-        data.messageDEV = 'Debe ser: GetAll, GetOne, AddOne, UpdateOne, DeleteLogic, DeleteHard, ActivateOne';
+        data.messageDEV = 'Debe ser: GetAll, GetOne, GetByIdPresentaOK, AddOne, UpdateOne, DeleteLogic, DeleteHard, ActivateOne';
         bitacora = AddMSG(bitacora, data, 'FAIL', 400, true);
         bitacora.finalRes = true;
         return FAIL(bitacora);
@@ -543,5 +603,6 @@ module.exports = {
   UpdateOneZTPreciosItem,
   DeleteLogicZTPreciosItem,
   DeleteHardZTPreciosItem,
-  ActivateOneZTPreciosItem
+  ActivateOneZTPreciosItem,
+  GetZTPreciosItemsByIdPresentaOK
   };

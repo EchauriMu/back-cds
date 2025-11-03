@@ -21,6 +21,7 @@ service ZTPreciosListasService @(path:'/api/ztprecios-listas') {
     IDTIPOLISTAOK: String,
     IDTIPOGENERALISTAOK: String,
     IDTIPOFORMULAOK: String,
+    skuid: String,
     SKUSIDS: LargeString,
     REGUSER: String,
     ACTIVED: Boolean,

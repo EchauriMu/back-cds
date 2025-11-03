@@ -57,6 +57,11 @@ async function ActivateZTPreciosListaMongo(IDLISTAOK, user) {
   return await saveWithAudit(ZTPreciosListas, filter, data, user, 'UPDATE');
 }
 
+async function GetZTPreciosListasBySKUIDMongo(skuid) {
+  if (!skuid) throw new Error('Falta parámetro SKUID');
+  return await ZTPreciosListas.find({ SKUSIDS: skuid, DELETED: { $ne: true } }).lean();
+}
+
 // ============================================
 // MÉTODOS LOCALES CON BITÁCORA
 // ============================================
@@ -364,6 +369,50 @@ async function ActivateOneMethod(bitacora, params, IDLISTAOK, user, dbServer) {
   }
 }
 
+async function GetBySKUIDMethod(bitacora, params, skuid, dbServer) {
+  let data = DATA();
+
+  // configurar contexto de data
+  data.process        = 'Obtener listas de precios por SKUID';
+  data.processType    = params.ProcessType || '';
+  data.loggedUser     = params.LoggedUser || '';
+  data.dbServer       = dbServer;
+  data.server         = process.env.SERVER_NAME || '';
+  data.api            = '/api/ztprecios‑listas/preciosListasCRUD';
+
+  // propagar en bitácora
+  bitacora.processType  = params.ProcessType || '';
+  bitacora.loggedUser   = params.LoggedUser || '';
+  bitacora.dbServer     = dbServer;
+  bitacora.server       = process.env.SERVER_NAME || '';
+  bitacora.process      = 'Obtener listas de precios por SKUID';
+
+  try {
+    let result;
+    switch (dbServer) {
+      case 'MongoDB':
+        result = await GetZTPreciosListasBySKUIDMongo(skuid);
+        break;
+      default:
+        throw new Error(`DBServer no soportado: ${dbServer}`);
+    }
+
+    data.dataRes   = result;
+    data.messageUSR = 'Listas obtenidas correctamente por SKUID';
+    data.messageDEV = 'GetZTPreciosListasBySKUIDMongo ejecutado sin errores';
+    bitacora = AddMSG(bitacora, data, 'OK', 200, true);
+    bitacora.success = true;
+    return bitacora;
+
+  } catch (error) {
+    data.messageUSR = 'Error al obtener las listas por SKUID';
+    data.messageDEV = error.message;
+    bitacora = AddMSG(bitacora, data, 'FAIL', 500, true);
+    bitacora.success = false;
+    return bitacora;
+  }
+}
+
 // ============================================
 // FUNCIÓN PRINCIPAL CRUD
 // ============================================
@@ -375,7 +424,7 @@ async function ZTPreciosListasCRUD(req) {
     const params     = req.req?.query || {};
     const body       = req.req?.body;
     const paramString= params ? new URLSearchParams(params).toString().trim() : '';
-    const { ProcessType, LoggedUser, DBServer, IDLISTAOK } = params;
+    const { ProcessType, LoggedUser, DBServer, IDLISTAOK, skuid } = params;
 
     // validación de parámetros obligatorios: ProcessType y LoggedUser
     if (!ProcessType) {
@@ -481,6 +530,19 @@ async function ZTPreciosListasCRUD(req) {
         if (!bitacora.success) { bitacora.finalRes = true; return FAIL(bitacora); }
         break;
 
+      case 'GetBySKUID':
+        if (!skuid) {
+          data.process     = 'Validación de parámetro skuid';
+          data.messageUSR  = 'Falta skuid';
+          data.messageDEV  = 'Parámetro skuid requerido';
+          bitacora         = AddMSG(bitacora, data, 'FAIL', 400, true);
+          bitacora.finalRes= true;
+          return FAIL(bitacora);
+        }
+        bitacora = await GetBySKUIDMethod(bitacora, params, skuid, dbServer);
+        if (!bitacora.success) { bitacora.finalRes = true; return FAIL(bitacora); }
+        break;
+
       default:
         data.process     = 'Validación de ProcessType';
         data.messageUSR  = 'ProcessType inválido o no especificado';
@@ -514,5 +576,6 @@ module.exports = {
   UpdateZTPreciosListaMongo,
   DeleteLogicZTPreciosListaMongo,
   DeleteHardZTPreciosListaMongo,
-  ActivateZTPreciosListaMongo
+  ActivateZTPreciosListaMongo,
+  GetZTPreciosListasBySKUIDMongo
 };
