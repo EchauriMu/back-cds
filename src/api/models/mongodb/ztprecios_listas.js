@@ -20,6 +20,9 @@ const ZTPRECIOS_LISTAS = new mongoose.Schema({
   IDLISTAOK: { type: String, required: true, unique: true, trim: true },
   IDINSTITUTOOK: { type: String, trim: true },
   IDLISTABK: { type: String, trim: true },
+
+  SKUSIDS: { type: [String], default: [] },
+
   DESLISTA: { type: String, required: true, trim: true },
   FECHAEXPIRAINI: { type: Date, required: true },
   FECHAEXPIRAFIN: { type: Date, required: true },

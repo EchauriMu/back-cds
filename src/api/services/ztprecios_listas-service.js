@@ -21,7 +21,17 @@ async function GetOneZTPreciosListaMongo(IDLISTAOK) {
 
 async function CreateZTPreciosListaMongo(data, user) {
   const filter = { IDLISTAOK: data.IDLISTAOK };
-  return await saveWithAudit(ZTPreciosListas, filter, data, user, 'CREATE');
+  const dataToSave = { ...data };
+
+  // Asegurarse de que SKUSIDS sea un arreglo, incluso si viene como string JSON
+  if (dataToSave.SKUSIDS && typeof dataToSave.SKUSIDS === 'string') {
+    try {
+      dataToSave.SKUSIDS = JSON.parse(dataToSave.SKUSIDS);
+    } catch (e) {
+      throw new Error('El campo SKUSIDS no es un arreglo JSON válido.');
+    }
+  }
+  return await saveWithAudit(ZTPreciosListas, filter, dataToSave, user, 'CREATE');
 }
 
 async function UpdateZTPreciosListaMongo(IDLISTAOK, data, user) {

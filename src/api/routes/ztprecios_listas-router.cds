@@ -21,10 +21,19 @@ service ZTPreciosListasService @(path:'/api/ztprecios-listas') {
     IDTIPOLISTAOK: String,
     IDTIPOGENERALISTAOK: String,
     IDTIPOFORMULAOK: String,
+    SKUSIDS: LargeString,
     REGUSER: String,
     ACTIVED: Boolean,
     DELETED: Boolean
   ) returns array of PreciosListas;
+
+  // Acción para actualizar SKUSIDs
+  @Core.Description: 'Actualiza los SKUs de una Lista de Precios'
+  @path: 'updateSKUSIDs'
+  action updateSKUSIDs(
+    IDLISTAOK: String,
+    SKUSIDS: LargeString
+  ) returns PreciosListas;
 
   // Ejemplos de uso 
   // GET ALL LISTAS

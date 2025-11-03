@@ -33,7 +33,6 @@ const ZTPRECIOS_ITEMS = new mongoose.Schema(
 
     HISTORY:       [ModificationSchema],
   },
-  { timestamps: true }
 );
 
 // Middleware de auditoría
