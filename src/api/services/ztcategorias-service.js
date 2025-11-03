@@ -26,8 +26,14 @@ async function GetOneZTCategoria(catid) {
 
 async function AddOneZTCategoria(payload, user) {
   if (!payload) throw new Error('No se recibió payload');
+
+  // 🔹 Inyectar el usuario logueado si no viene en el body
+  if (!payload.REGUSER && user) {
+    payload.REGUSER = user;
+  }
+
   const required = ['CATID', 'Nombre', 'REGUSER'];
-  const missing = required.filter(k => payload[k] === undefined || payload[k] === null || payload[k] === '');
+  const missing = required.filter(k => !payload[k]);
   if (missing.length) throw new Error(`Faltan campos obligatorios: ${missing.join(', ')}`);
 
   const dup = await ZTCATEGORIAS.findOne({ CATID: payload.CATID }).lean();
@@ -40,12 +46,13 @@ async function AddOneZTCategoria(payload, user) {
     ACTIVED: payload.ACTIVED ?? true,
     DELETED: payload.DELETED ?? false,
     REGUSER: payload.REGUSER
-    // REGDATE, HISTORY se manejan en el hook / saveWithAudit
+    // REGDATE y HISTORY se llenan por hook
   };
 
-  const created = await saveWithAudit(ZTCATEGORIAS, {}, data, user, 'CREATE');
+  const created = await saveWithAudit(ZTCATEGORIAS, {}, data, payload.REGUSER, 'CREATE');
   return created;
 }
+
 
 async function UpdateOneZTCategoria(catid, cambios, user) {
   if (!catid) throw new Error('Falta parámetro catid');
