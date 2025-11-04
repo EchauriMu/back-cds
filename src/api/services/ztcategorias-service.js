@@ -51,6 +51,13 @@ async function UpdateOneZTCategoria(catid, cambios, user) {
   if (!catid) throw new Error('Falta parámetro catid');
   if (!cambios || Object.keys(cambios).length === 0) throw new Error('No se enviaron datos para actualizar');
 
+  // 💡 FIX: Prevenir colisión de CATID al actualizar.
+  // Si se intenta cambiar el CATID, verificar que no exista en otro documento.
+  if (cambios.CATID && cambios.CATID !== catid) {
+    const dup = await ZTCATEGORIAS.findOne({ CATID: cambios.CATID }).lean();
+    if (dup) throw new Error(`El nuevo CATID '${cambios.CATID}' ya está en uso por otra categoría.`);
+  }
+
   const filter = { CATID: catid };
   const updated = await saveWithAudit(ZTCATEGORIAS, filter, cambios, user, 'UPDATE');
   return updated;
@@ -208,6 +215,11 @@ async function AddOneMethod(bitacora, params, body, req, dbServer) {
 }
 
 async function UpdateOneMethod(bitacora, params, catid, req, user, dbServer) {
+  console.log('>> Inicia UpdateOneMethod en ztcategorias-service.js');
+  console.log('   - CATID a actualizar:', catid);
+  console.log('   - Payload (cambios):', getPayload(req));
+  console.log('   - Usuario que modifica:', user);
+
   let data = DATA();
   data.process = 'Actualizar categoría';
   data.processType = params.ProcessType || '';
