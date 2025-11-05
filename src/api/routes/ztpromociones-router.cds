@@ -17,6 +17,22 @@ service ZTPromocionesService @(path:'/api/ztpromociones') {
         Descripcion: String,
         FechaIni: String,
         FechaFin: String,
+        // Nuevos campos para estructura moderna
+        ProductosAplicables: array of {
+            SKUID: String;
+            NombreProducto: String;
+            PrecioOriginal: Double;
+        },
+        CategoriasAplicables: array of String,
+        MarcasAplicables: array of String,
+        TipoPromocion: String,
+        DescuentoPorcentaje: Double,
+        DescuentoMonto: Double,
+        TipoDescuento: String,
+        PermiteAcumulacion: Boolean,
+        LimiteUsos: Integer,
+        UsosActuales: Integer,
+        // Compatibilidad hacia atrás
         IdListaOK: String,
         SKUID: String,
         REGUSER: String,
