@@ -20,7 +20,8 @@ service ZTProductsPresentacionesService @(path:'/api/ztproducts-presentaciones')
     DELETED        : Boolean,
     REGUSER        : String,
     PropiedadesExtras : LargeString,
-    files          : many myur.FileData      // <-- Usamos el alias 'myur' para referenciar a FileData
+    files          : many myur.FileData,      // <-- Usamos el alias 'myur' para referenciar a FileData
+    MODUSER        : String
     // Nota: MODUSER/MODDATE los rellena tu helper/update; no hace falta exponerlos aquí
   ) returns array of Presentaciones;
 

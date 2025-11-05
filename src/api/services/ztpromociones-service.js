@@ -234,7 +234,43 @@ async function AddOneZTPromocion(payload, user) {
   const existe = await ZTPromociones.findOne({ IdPromoOK: payload.IdPromoOK }).lean();
   if (existe) throw new Error(`Ya existe una promoción con IdPromoOK: ${payload.IdPromoOK}`);
   
-  const promoData = { ...payload, ACTIVED: payload.ACTIVED ?? true, DELETED: payload.DELETED ?? false };
+  // Validar que tenga al menos productos aplicables
+  const hasProducts = payload.ProductosAplicables && payload.ProductosAplicables.length > 0;
+  
+  if (!hasProducts) {
+    throw new Error('Debe especificar al menos un producto aplicable');
+  }
+  
+  // Validar descuento
+  const tipoDescuento = payload.TipoDescuento || 'PORCENTAJE';
+  if (tipoDescuento === 'PORCENTAJE') {
+    if (!payload.DescuentoPorcentaje || payload.DescuentoPorcentaje <= 0 || payload.DescuentoPorcentaje > 100) {
+      throw new Error('Debe especificar un porcentaje de descuento válido entre 1 y 100');
+    }
+  } else if (tipoDescuento === 'MONTO_FIJO') {
+    if (!payload.DescuentoMonto || payload.DescuentoMonto <= 0) {
+      throw new Error('Debe especificar un monto de descuento válido mayor a 0');
+    }
+  }
+  
+  // Validar fechas
+  const fechaIni = new Date(payload.FechaIni);
+  const fechaFin = new Date(payload.FechaFin);
+  if (fechaFin <= fechaIni) {
+    throw new Error('La fecha fin debe ser posterior a la fecha inicio');
+  }
+  
+  // Preparar datos de la promoción
+  const promoData = { 
+    ...payload, 
+    ACTIVED: payload.ACTIVED ?? true, 
+    DELETED: payload.DELETED ?? false,
+    TipoDescuento: tipoDescuento,
+    PermiteAcumulacion: payload.PermiteAcumulacion ?? false,
+    LimiteUsos: payload.LimiteUsos || null,
+    UsosActuales: 0
+  };
+  
   return await saveWithAudit(ZTPromociones, {}, promoData, user, 'CREATE');
 }
 

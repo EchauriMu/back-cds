@@ -128,6 +128,18 @@ async function UpdateOneZTProductsPresentacion(idpresentaok, cambios, user) {
   if (!idpresentaok) throw new Error('Falta parámetro IdPresentaOK');
   if (!cambios || Object.keys(cambios).length === 0) throw new Error('No se enviaron datos para actualizar');
 
+  // Parsear PropiedadesExtras si viene como string, igual que en AddOne
+  if (typeof cambios.PropiedadesExtras === 'string' && cambios.PropiedadesExtras.trim() !== '') {
+    try {
+      cambios.PropiedadesExtras = JSON.parse(cambios.PropiedadesExtras);
+    } catch (jsonError) {
+      throw new Error(`El formato de PropiedadesExtras no es un JSON válido.`);
+    }
+  } else if (cambios.PropiedadesExtras === '') {
+    // Si se envía un string vacío, lo interpretamos como un objeto vacío.
+    cambios.PropiedadesExtras = {};
+  }
+
   const filter = { IdPresentaOK: idpresentaok };
   // saveWithAudit asigna MODUSER/MODDATE y triggerá pre('save') para HISTORY
   const updated = await saveWithAudit(ZTProducts_Presentaciones, filter, cambios, user, 'UPDATE');
@@ -335,7 +347,7 @@ async function UpdateOneMethod(bitacora, params, idpresentaok, req, user, dbServ
     let result;
     switch (dbServer) {
       case 'MongoDB':
-        result = await UpdateOneZTProductsPresentacion(idpresentaok, getPayload(req), user);
+        result = await UpdateOneZTProductsPresentacion(idpresentaok, getx (req), user);
         break;
       case 'HANA':
         throw new Error('HANA no implementado aún para UpdateOne');
@@ -554,7 +566,9 @@ async function ZTProductsPresentacionesCRUD(req) {
     // 1. PARAMS
     const params = req.req?.query || {};    
     const paramString = params ? new URLSearchParams(params).toString().trim() : '';
-    const { ProcessType, LoggedUser, DBServer, idpresentaok } = params;
+    // Soportar tanto 'idpresentaok' como 'IdPresentaOK' para mayor flexibilidad.
+    const { ProcessType, LoggedUser, DBServer } = params;
+    const idpresentaok = params.idpresentaok || params.IdPresentaOK;
 
     // 2. VALIDACIONES
     if (!ProcessType) {
@@ -587,7 +601,7 @@ async function ZTProductsPresentacionesCRUD(req) {
     // 4. ROUTING POR PROCESSTYPE
     switch (ProcessType) {
       case 'GetAll': {
-        bitacora = await GetAllMethod(bitacora, req, params, paramString, dbServer);
+        bitacora = await GetAllMethod(bitacora, req, params, paramString, null, dbServer);
         if (!bitacora.success) { bitacora.finalRes = true; return FAIL(bitacora); }
         break;
       }
