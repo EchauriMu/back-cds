@@ -12,8 +12,10 @@ service ZTProductsService @(path:'/api/ztproducts') {
     @path: 'crudProducts'
     action crudProducts(
         ProcessType: String,
+        PRODUCTNAME: String,
         SKUID: String,
         DESSKU: String,
+        MARCA: String,
         CATEGORIAS: String,
         IDUNIDADMEDIDA: String,
         BARCODE: String,
@@ -48,4 +50,3 @@ service ZTProductsService @(path:'/api/ztproducts') {
     // DELETE HARD
     // POST /api/ztproducts/crudProducts?ProcessType=delete&type=hard&skuid=PROD123
 }
-

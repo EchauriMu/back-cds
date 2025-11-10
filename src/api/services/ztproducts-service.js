@@ -64,6 +64,15 @@ async function UpdateOneZTProduct(skuid, cambios, user) {
   if (!skuid) throw new Error('Falta parámetro SKUID');
   if (!cambios || Object.keys(cambios).length === 0) throw new Error('No se enviaron datos para actualizar');
 
+  // FIC: Parsear CATEGORIAS si viene como un string JSON
+  if (cambios.CATEGORIAS && typeof cambios.CATEGORIAS === 'string') {
+    try {
+      cambios.CATEGORIAS = JSON.parse(cambios.CATEGORIAS);
+    } catch (e) {
+      throw new Error('El campo CATEGORIAS no es un JSON de array válido.');
+    }
+  }
+
   const filter = { SKUID: skuid, ACTIVED: true, DELETED: false };
   const updateData = { ...cambios };
   // saveWithAudit asigna MODUSER/MODDATE y triggerá pre('save') para HISTORY

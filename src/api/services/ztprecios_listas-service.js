@@ -252,6 +252,46 @@ async function DeleteLogicMethod(bitacora, params, IDLISTAOK, user, dbServer) {
   }
 }
 
+async function GetBySKUIDMethod(bitacora, params, skuid, dbServer) {
+  let data = DATA();
+  data.process = 'Obtener listas por SKUID';
+  data.processType = params.ProcessType || '';
+  data.loggedUser = params.LoggedUser || '';
+  data.dbServer = dbServer;
+  data.server = process.env.SERVER_NAME || '';
+  data.api = '/api/ztprecios-listas/preciosListasCRUD';
+
+  bitacora.process = data.process;
+  bitacora.processType = data.processType;
+  bitacora.loggedUser = data.loggedUser;
+  bitacora.dbServer = dbServer;
+  bitacora.server = data.server;
+
+  try {
+    let result;
+    switch (dbServer) {
+      case 'MongoDB':
+        result = await GetZTPreciosListasBySKUIDMongo(skuid);
+        break;
+      default:
+        throw new Error(`DBServer no soportado: ${dbServer}`);
+    }
+
+    data.dataRes = result;
+    data.messageUSR = 'Listas obtenidas por SKUID correctamente';
+    data.messageDEV = 'GetZTPreciosListasBySKUIDMongo ejecutado sin errores';
+    bitacora = AddMSG(bitacora, data, 'OK', 200, true);
+    bitacora.success = true;
+    return bitacora;
+  } catch (error) {
+    data.messageUSR = 'Error al obtener las listas por SKUID';
+    data.messageDEV = error.message;
+    bitacora = AddMSG(bitacora, data, 'FAIL', 500, true);
+    bitacora.success = false;
+    return bitacora;
+  }
+}
+
 // ============================================
 // FUNCIÓN PRINCIPAL CRUD
 // ============================================
@@ -280,9 +320,9 @@ async function ZTPreciosListasCRUD(req) {
       case 'DeleteHard':
         return OK(await DeleteHardZTPreciosListaMongo(IDLISTAOK));
       case 'ActivateOne':
-        return OK(await ActivateZTPreciosListaMongo(IDLISTAOK, LoggedUser));
+        return OK(await ActivateZTPreciosListaMongo(IDLISTAOK, LoggedUser)); // Esto también debería usar un método intermedio
       case 'GetBySKUID':
-        return OK(await GetZTPreciosListasBySKUIDMongo(skuid));
+        return OK(await GetBySKUIDMethod(bitacora, params, skuid, dbServer));
       default:
         throw new Error(`ProcessType inválido: ${ProcessType}`);
     }
