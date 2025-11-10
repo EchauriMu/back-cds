@@ -10,7 +10,10 @@ const { saveWithAudit } = require('../../helpers/audit-timestap');
 // UTIL: OBTENER PAYLOAD DESDE CDS/EXPRESS
 // ============================================
 function getPayload(req) {
-  return req.data || req.req?.body || null;
+  // Prioridad: req.req.body (Express) > req.data (CDS) > null
+  const payload = req.req?.body || req.data || null;
+  console.log('🔍 getPayload - payload extraído:', JSON.stringify(payload, null, 2));
+  return payload;
 }
 
 // ============================================
@@ -65,7 +68,7 @@ async function crudZTPromociones(req) {
     // 4. EJECUTAR OPERACIÓN SEGÚN PROCESSTYPE
     switch (ProcessType) {
       case 'GetAll':
-        bitacora = await GetPromocionMethod(bitacora, params, paramString, body, dbServer);
+        bitacora = await GetPromocionMethod(bitacora, params, paramString, body, req, dbServer);
         if (!bitacora.success) {
           bitacora.finalRes = true;
           return FAIL(bitacora);
@@ -81,7 +84,7 @@ async function crudZTPromociones(req) {
           bitacora.finalRes = true;
           return FAIL(bitacora);
         }
-        bitacora = await GetPromocionMethod(bitacora, params, paramString, body, dbServer);
+        bitacora = await GetPromocionMethod(bitacora, params, paramString, body, req, dbServer);
         if (!bitacora.success) {
           bitacora.finalRes = true;
           return FAIL(bitacora);
@@ -121,7 +124,7 @@ async function crudZTPromociones(req) {
           bitacora.finalRes = true;
           return FAIL(bitacora);
         }
-        bitacora = await DeletePromocionMethod(bitacora, { ...params, paramString }, IdPromoOK, LoggedUser, dbServer);
+        bitacora = await DeletePromocionMethod(bitacora, { ...params, paramString }, IdPromoOK, req, LoggedUser, dbServer);
         if (!bitacora.success) {
           bitacora.finalRes = true;
           return FAIL(bitacora);
@@ -137,7 +140,7 @@ async function crudZTPromociones(req) {
           bitacora.finalRes = true;
           return FAIL(bitacora);
         }
-        bitacora = await DeletePromocionMethod(bitacora, { ...params, paramString }, IdPromoOK, LoggedUser, dbServer);
+        bitacora = await DeletePromocionMethod(bitacora, { ...params, paramString }, IdPromoOK, req, LoggedUser, dbServer);
         if (!bitacora.success) {
           bitacora.finalRes = true;
           return FAIL(bitacora);
@@ -215,7 +218,9 @@ async function crudZTPromociones(req) {
 //####################################################################################
 
 async function GetAllZTPromociones() {
-  return await ZTPromociones.find({ ACTIVED: true, DELETED: false }).lean();
+  // Devolver todas las promociones, incluyendo las inactivas (DELETED: true)
+  // Ordenar por DELETED (activas primero) y luego por fecha de creación
+  return await ZTPromociones.find({}).sort({ DELETED: 1, REGDATE: -1 }).lean();
 }
 
 async function GetOneZTPromocion(idPromoOK) {
@@ -275,12 +280,93 @@ async function AddOneZTPromocion(payload, user) {
 }
 
 async function UpdateOneZTPromocion(idPromoOK, payload, user) {
+  console.log('🔧 UpdateOneZTPromocion iniciado con:', { idPromoOK, user, payload });
+  
   if (!idPromoOK) throw new Error('IdPromoOK es requerido');
   if (!user) throw new Error('Usuario requerido para auditoría');
   
-  const filter = { IdPromoOK: idPromoOK, ACTIVED: true, DELETED: false };
-  const promo = await saveWithAudit(ZTPromociones, filter, payload, user, 'UPDATE');
-  if (!promo) throw new Error(`No se encontró la promoción con IdPromoOK: ${idPromoOK}`);
+  // Buscar la promoción existente
+  const existingPromo = await ZTPromociones.findOne({ 
+    IdPromoOK: idPromoOK, 
+    DELETED: false 
+  }).lean();
+  
+  console.log('📋 Promoción existente:', existingPromo ? 'Encontrada' : 'No encontrada');
+  
+  if (!existingPromo) {
+    throw new Error(`No se encontró la promoción con IdPromoOK: ${idPromoOK}`);
+  }
+  
+  // Preparar datos de actualización
+  const updateData = {
+    ...payload,
+    MODUSER: user,
+    MODDATE: new Date()
+  };
+  
+  console.log('📝 Datos de actualización preparados:', JSON.stringify(updateData, null, 2));
+  
+  // Si se actualizan las fechas, validar que sean correctas
+  if (updateData.FechaIni || updateData.FechaFin) {
+    const fechaIni = new Date(updateData.FechaIni || existingPromo.FechaIni);
+    const fechaFin = new Date(updateData.FechaFin || existingPromo.FechaFin);
+    
+    if (fechaFin <= fechaIni) {
+      throw new Error('La fecha fin debe ser posterior a la fecha inicio');
+    }
+  }
+  
+  // Validar descuento si se actualiza
+  if (updateData.TipoDescuento || updateData.DescuentoPorcentaje !== undefined || updateData.DescuentoMonto !== undefined) {
+    const tipoDescuento = updateData.TipoDescuento || existingPromo.TipoDescuento;
+    
+    if (tipoDescuento === 'PORCENTAJE') {
+      // Solo validar si se proporciona un nuevo valor de descuento
+      if (updateData.DescuentoPorcentaje !== undefined) {
+        const descuento = updateData.DescuentoPorcentaje;
+        if (descuento <= 0 || descuento > 100) {
+          throw new Error('El porcentaje de descuento debe estar entre 1 y 100');
+        }
+      } else {
+        // Si no se proporciona, verificar que el existente sea válido
+        const descuento = existingPromo.DescuentoPorcentaje;
+        if (!descuento || descuento <= 0 || descuento > 100) {
+          throw new Error('El porcentaje de descuento debe estar entre 1 y 100');
+        }
+      }
+    } else if (tipoDescuento === 'MONTO_FIJO') {
+      // Solo validar si se proporciona un nuevo valor de descuento
+      if (updateData.DescuentoMonto !== undefined) {
+        const descuento = updateData.DescuentoMonto;
+        if (descuento <= 0) {
+          throw new Error('El monto de descuento debe ser mayor a 0');
+        }
+      } else {
+        // Si no se proporciona, verificar que el existente sea válido
+        const descuento = existingPromo.DescuentoMonto;
+        if (!descuento || descuento <= 0) {
+          throw new Error('El monto de descuento debe ser mayor a 0');
+        }
+      }
+    }
+  }
+  
+  // Validar que tenga al menos productos aplicables si se está actualizando
+  if (updateData.ProductosAplicables !== undefined) {
+    const hasProducts = updateData.ProductosAplicables && updateData.ProductosAplicables.length > 0;
+    
+    if (!hasProducts) {
+      throw new Error('Debe especificar al menos un producto aplicable');
+    }
+  }
+  
+  const filter = { IdPromoOK: idPromoOK, DELETED: false };
+  const promo = await saveWithAudit(ZTPromociones, filter, updateData, user, 'UPDATE');
+  
+  if (!promo) {
+    throw new Error(`No se pudo actualizar la promoción con IdPromoOK: ${idPromoOK}`);
+  }
+  
   return promo;
 }
 
@@ -317,7 +403,7 @@ async function ActivateOneZTPromocion(idPromoOK) {
 //FIC: Methods for each operation with Bitacora - Capa 2
 //####################################################################################
 
-async function GetPromocionMethod(bitacora, params, paramString, body, dbServer) {
+async function GetPromocionMethod(bitacora, params, paramString, body, req, dbServer) {
     let data = DATA();
     
     // Configurar contexto de data
@@ -397,6 +483,12 @@ async function GetPromocionMethod(bitacora, params, paramString, body, dbServer)
         }
         
         bitacora.success = true;
+        
+        // Establecer status HTTP 200 igual que en AddPromocionMethod
+        if (req?.http?.res) {
+            req.http.res.status(200);
+        }
+        
         return bitacora;
         
     } catch (error) {
@@ -541,6 +633,11 @@ async function UpdatePromocionMethod(bitacora, params, paramString, body, req, u
         bitacora = AddMSG(bitacora, data, 'OK', 200, true);
         bitacora.success = true;
         
+        // Establecer status HTTP 200 igual que en AddPromocionMethod
+        if (req?.http?.res) {
+            req.http.res.status(200);
+        }
+        
         return bitacora;
         
     } catch (error) {
@@ -563,7 +660,7 @@ async function UpdatePromocionMethod(bitacora, params, paramString, body, req, u
     }
 }
 
-async function DeletePromocionMethod(bitacora, params, IdPromoOK, user, dbServer) {
+async function DeletePromocionMethod(bitacora, params, IdPromoOK, req, user, dbServer) {
     let data = DATA();
     
     // Configurar contexto de data
@@ -611,6 +708,11 @@ async function DeletePromocionMethod(bitacora, params, IdPromoOK, user, dbServer
         data.messageDEV = isHardDelete ? 'DeleteHardZTPromocion ejecutado sin errores' : 'DeleteLogicZTPromocion ejecutado sin errores';
         bitacora = AddMSG(bitacora, data, 'OK', 200, true);
         bitacora.success = true;
+        
+        // Establecer status HTTP 200 igual que en AddPromocionMethod
+        if (req?.http?.res) {
+            req.http.res.status(200);
+        }
         
         return bitacora;
         
