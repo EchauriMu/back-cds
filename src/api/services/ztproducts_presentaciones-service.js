@@ -347,7 +347,7 @@ async function UpdateOneMethod(bitacora, params, idpresentaok, req, user, dbServ
     let result;
     switch (dbServer) {
       case 'MongoDB':
-        result = await UpdateOneZTProductsPresentacion(idpresentaok, getx (req), user);
+        result = await UpdateOneZTProductsPresentacion(idpresentaok, getPayload(req), user);
         break;
       case 'HANA':
         throw new Error('HANA no implementado aún para UpdateOne');

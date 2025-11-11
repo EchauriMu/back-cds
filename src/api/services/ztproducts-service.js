@@ -207,7 +207,8 @@ async function crudZTProducts(req) {
           bitacora.finalRes = true;
           return FAIL(bitacora);
         }
-        bitacora = await DeleteProductMethod(bitacora, { ...params, paramString }, skuid, LoggedUser, dbServer);
+        const deleteResult = await DeleteLogicZTProduct(skuid, LoggedUser);
+        bitacora = AddMSG(bitacora, DATA('Borrado Lógico', `Producto ${skuid} desactivado.`, deleteResult), 'OK', 200, true);
         if (!bitacora.success) {
           bitacora.finalRes = true;
           return FAIL(bitacora);
@@ -239,9 +240,8 @@ async function crudZTProducts(req) {
           bitacora.finalRes = true;
           return FAIL(bitacora);
         }
-        // Agregar operation=activate para el método UpdateProductMethod
-        const activateParams = { ...params, operation: 'activate' };
-        bitacora = await UpdateProductMethod(bitacora, activateParams, paramString, body, req, LoggedUser, dbServer);
+        const activateResult = await ActivateOneZTProduct(skuid, LoggedUser);
+        bitacora = AddMSG(bitacora, DATA('Activación', `Producto ${skuid} activado.`, activateResult), 'OK', 200, true);
         if (!bitacora.success) {
           bitacora.finalRes = true;
           return FAIL(bitacora);
