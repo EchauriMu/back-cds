@@ -126,24 +126,82 @@ async function AddOneZTProductsPresentacion(payload, user) {
 
 async function UpdateOneZTProductsPresentacion(idpresentaok, cambios, user) {
   if (!idpresentaok) throw new Error('Falta parámetro IdPresentaOK');
-  if (!cambios || Object.keys(cambios).length === 0) throw new Error('No se enviaron datos para actualizar');
+  const payload = cambios; // Renombramos para claridad
+  if (!payload || Object.keys(payload).length === 0) throw new Error('No se enviaron datos para actualizar');
 
-  // Parsear PropiedadesExtras si viene como string, igual que en AddOne
-  if (typeof cambios.PropiedadesExtras === 'string' && cambios.PropiedadesExtras.trim() !== '') {
+  const { files, ...presentationChanges } = payload;
+
+  // 1. ACTUALIZAR DATOS DE LA PRESENTACIÓN
+  // Parsear PropiedadesExtras si viene como string
+  if (typeof presentationChanges.PropiedadesExtras === 'string' && presentationChanges.PropiedadesExtras.trim() !== '') {
     try {
-      cambios.PropiedadesExtras = JSON.parse(cambios.PropiedadesExtras);
+      presentationChanges.PropiedadesExtras = JSON.parse(presentationChanges.PropiedadesExtras);
     } catch (jsonError) {
       throw new Error(`El formato de PropiedadesExtras no es un JSON válido.`);
     }
-  } else if (cambios.PropiedadesExtras === '') {
-    // Si se envía un string vacío, lo interpretamos como un objeto vacío.
-    cambios.PropiedadesExtras = {};
+  } else if (presentationChanges.PropiedadesExtras === '') {
+    presentationChanges.PropiedadesExtras = {};
   }
 
   const filter = { IdPresentaOK: idpresentaok };
-  // saveWithAudit asigna MODUSER/MODDATE y triggerá pre('save') para HISTORY
-  const updated = await saveWithAudit(ZTProducts_Presentaciones, filter, cambios, user, 'UPDATE');
-  return updated;
+  const updatedPresentation = await saveWithAudit(ZTProducts_Presentaciones, filter, presentationChanges, user, 'UPDATE');
+
+  if (!updatedPresentation) {
+    throw new Error('No se encontró la presentación para actualizar o no se pudo guardar.');
+  }
+
+  const processedFiles = [];
+
+  // 2. PROCESAR ARCHIVOS (SI SE ENVIARON)
+  if (files && files.length > 0) {
+    // Obtener SKUID de la presentación recién actualizada
+    const skuid = updatedPresentation.SKUID;
+
+    for (const file of files) {
+      const { fileBase64, originalname, mimetype, ...restOfFile } = file;
+
+      if (!fileBase64 || !originalname || !mimetype) {
+        console.warn('Se omitió un archivo en la actualización por falta de datos:', file);
+        continue; // Saltar al siguiente archivo
+      }
+
+      // Si el archivo que se sube es el principal, borramos el anterior si existe.
+      if (restOfFile.PRINCIPAL === true) {
+        const oldPrincipal = await ZTProduct_FILES.findOne({ IdPresentaOK: idpresentaok, PRINCIPAL: true });
+        if (oldPrincipal) {
+          await ZTProduct_FILES.findByIdAndDelete(oldPrincipal._id);
+          // TODO: Añadir lógica para borrar de Azure Blob Storage usando oldPrincipal.URL
+        }
+      }
+
+      // Subir el nuevo archivo
+      const cleanBase64 = fileBase64.replace(/^data:([A-Za-z-+\/]+);base64,/, '').replace(/\r?\n|\r/g, '');
+      const fileBuffer = Buffer.from(cleanBase64, 'base64');
+      const fileForHelper = {
+        buffer: fileBuffer,
+        originalname,
+        mimetype,
+      };
+
+      const bodyForHelper = {
+        SKUID: skuid,
+        IdPresentaOK: idpresentaok,
+        ...restOfFile,
+      };
+
+      const uploadResult = await handleUploadZTProductFileCDS(fileForHelper, bodyForHelper, user);
+
+      if (uploadResult.error || uploadResult.status >= 400) {
+        // Si la subida falla, al menos la presentación se actualizó. Se podría implementar un rollback más complejo.
+        console.error('Error al subir archivo durante la actualización:', uploadResult.message);
+      } else {
+        processedFiles.push(uploadResult.data);
+      }
+    }
+  }
+
+  // 3. DEVOLVER LA PRESENTACIÓN ACTUALIZADA Y LOS ARCHIVOS PROCESADOS
+  return { presentation: updatedPresentation, files: processedFiles };
 }
 
 async function DeleteLogicZTProductsPresentacion(idpresentaok, user) {
@@ -347,7 +405,7 @@ async function UpdateOneMethod(bitacora, params, idpresentaok, req, user, dbServ
     let result;
     switch (dbServer) {
       case 'MongoDB':
-        result = await UpdateOneZTProductsPresentacion(idpresentaok, getx (req), user);
+        result = await UpdateOneZTProductsPresentacion(idpresentaok, getPayload(req), user);
         break;
       case 'HANA':
         throw new Error('HANA no implementado aún para UpdateOne');
