@@ -316,7 +316,7 @@ async function UpdateOneZTPromocion(idPromoOK, payload, user) {
     }
   }
   
-  // Validar descuento si se actualiza
+  // Validar descuento solo si se está actualizando explícitamente
   if (updateData.TipoDescuento || updateData.DescuentoPorcentaje !== undefined || updateData.DescuentoMonto !== undefined) {
     const tipoDescuento = updateData.TipoDescuento || existingPromo.TipoDescuento;
     
@@ -327,24 +327,12 @@ async function UpdateOneZTPromocion(idPromoOK, payload, user) {
         if (descuento <= 0 || descuento > 100) {
           throw new Error('El porcentaje de descuento debe estar entre 1 y 100');
         }
-      } else {
-        // Si no se proporciona, verificar que el existente sea válido
-        const descuento = existingPromo.DescuentoPorcentaje;
-        if (!descuento || descuento <= 0 || descuento > 100) {
-          throw new Error('El porcentaje de descuento debe estar entre 1 y 100');
-        }
       }
     } else if (tipoDescuento === 'MONTO_FIJO') {
       // Solo validar si se proporciona un nuevo valor de descuento
       if (updateData.DescuentoMonto !== undefined) {
         const descuento = updateData.DescuentoMonto;
         if (descuento <= 0) {
-          throw new Error('El monto de descuento debe ser mayor a 0');
-        }
-      } else {
-        // Si no se proporciona, verificar que el existente sea válido
-        const descuento = existingPromo.DescuentoMonto;
-        if (!descuento || descuento <= 0) {
           throw new Error('El monto de descuento debe ser mayor a 0');
         }
       }
@@ -383,7 +371,7 @@ async function DeleteLogicZTPromocion(idPromoOK, user) {
 
 async function DeleteHardZTPromocion(idPromoOK) {
   if (!idPromoOK) throw new Error('IdPromoOK es requerido');
-  const promo = await ZTPromociones.findOneAndDelete({ IdPromoOK: idPromoOK });
+  const promo = await ZTPromociones.findOneAndDelete({ IdPromoOK: idPromoOK }).lean();
   if (!promo) throw new Error(`No se encontró la promoción con IdPromoOK: ${idPromoOK}`);
   return promo;
 }

@@ -7,10 +7,12 @@ entity ZTPROMOCIONES {
   FechaIni         : DateTime;
   FechaFin         : DateTime;
   
-  // PRODUCTOS APLICABLES - Array de objetos
+  // PRODUCTOS APLICABLES - Array de objetos (ahora basado en presentaciones)
   ProductosAplicables : array of {
+    IdPresentaOK   : String(100);
     SKUID          : String(100);
     NombreProducto : String(255);
+    NombrePresentacion : String(255);
     PrecioOriginal : Double;
   };
   

@@ -25,14 +25,23 @@ const ZTPromocionesSchema = new mongoose.Schema({
     type: Date, 
     required: true 
   },
-  // PRODUCTOS APLICABLES - Array de SKUIDs
+  // PRESENTACIONES APLICABLES - Array de presentaciones con sus productos
   ProductosAplicables: [{
+    IdPresentaOK: { 
+      type: String, 
+      required: false,
+      trim: true 
+    },
     SKUID: { 
       type: String, 
       required: true,
       trim: true 
     },
     NombreProducto: { 
+      type: String, 
+      trim: true 
+    },
+    NombrePresentacion: { 
       type: String, 
       trim: true 
     },

@@ -17,10 +17,12 @@ service ZTPromocionesService @(path:'/api/ztpromociones') {
         Descripcion: String,
         FechaIni: String,
         FechaFin: String,
-        // Nuevos campos para estructura moderna
+        // Nuevos campos para estructura moderna (basado en presentaciones)
         ProductosAplicables: array of {
+            IdPresentaOK: String;
             SKUID: String;
             NombreProducto: String;
+            NombrePresentacion: String;
             PrecioOriginal: Double;
         },
         CategoriasAplicables: array of String,
