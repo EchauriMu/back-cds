@@ -73,7 +73,7 @@ async function UpdateOneZTProduct(skuid, cambios, user) {
     }
   }
 
-  const filter = { SKUID: skuid, ACTIVED: true, DELETED: false };
+  const filter = { SKUID: skuid };
   const updateData = { ...cambios };
   // saveWithAudit asigna MODUSER/MODDATE y triggerá pre('save') para HISTORY
   const updated = await saveWithAudit(ZTProduct, filter, updateData, user, 'UPDATE');
