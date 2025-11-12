@@ -75,7 +75,7 @@ const ZTProductSchema = new mongoose.Schema({
   },
   HISTORY: [ModificationSchema]
 }, { 
-  timestamps: true  // Maneja automáticamente createdAt y updatedAt
+
 });
 
 
