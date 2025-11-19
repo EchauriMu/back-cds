@@ -1,7 +1,7 @@
 // Servicio para ZTPRODUCTS (productos)
 const mongoose = require('mongoose');
 const ZTProduct = require('../models/mongodb/ztproducts');
-const { cosmosConnection } = require('../../config/connectToMongoDB.config');
+const { getCosmosDatabase } = require('../../config/connectToMongoDB.config');
 
 //FIC: Imports fuctions/methods
 const { OK, FAIL, BITACORA, DATA, AddMSG } = require('../../middlewares/respPWA.handler');
@@ -12,6 +12,20 @@ const { saveWithAudit } = require('../../helpers/audit-timestap');
 // ============================================
 function getPayload(req) {
   return req.data || req.req?.body || null;
+}
+
+// ============================================
+// UTIL: OBTENER CONTENEDOR DE COSMOS DB
+// ============================================
+async function getCosmosContainer() {
+  const database = getCosmosDatabase();
+  if (!database) {
+    throw new Error('La conexión con Cosmos DB no está disponible.');
+  }
+  // El nombre del contenedor es el mismo que el de la colección de Mongoose
+  const containerName = 'ZTPRODUCTS';
+  const { container } = await database.containers.createIfNotExists({ id: containerName });
+  return container;
 }
 
 // ============================================
@@ -102,6 +116,84 @@ async function ActivateOneZTProduct(skuid, user) {
   const res = await saveWithAudit(ZTProduct, filter, data, user, 'UPDATE');
   return res;
 }
+
+// ============================================
+// CRUD BÁSICO (COSMOS DB SDK) - Capa 1
+// ============================================
+async function GetAllZTProductsCosmos() {
+  const container = await getCosmosContainer();
+  const { resources: items } = await container.items.query("SELECT * from c").fetchAll();
+  return items;
+}
+
+async function GetOneZTProductCosmos(skuid) {
+  if (!skuid) throw new Error('Falta parámetro SKUID');
+  const container = await getCosmosContainer();
+  // En Cosmos DB, el 'id' es la clave de partición y el identificador único del ítem.
+  // Asumimos que SKUID es el 'id' en Cosmos.
+  const { resource: item } = await container.item(skuid, skuid).read();
+  if (!item) throw new Error('No se encontró el producto');
+  return item;
+}
+
+async function AddOneZTProductCosmos(payload, user) {
+  if (!payload) throw new Error('No se recibió payload. Verifica Content-Type: application/json');
+
+  const required = ['SKUID', 'DESSKU', 'IDUNIDADMEDIDA'];
+  const missing = required.filter((k) => !payload[k]);
+  if (missing.length) throw new Error(`Faltan campos obligatorios: ${missing.join(', ')}`);
+
+  const container = await getCosmosContainer();
+
+  // Verificar duplicados
+  const { resource: existing } = await container.item(payload.SKUID, payload.SKUID).read().catch(() => ({}));
+  if (existing) throw new Error('Ya existe un producto con ese SKUID');
+
+  const newItem = {
+    id: payload.SKUID, // 'id' es obligatorio en Cosmos DB, usamos SKUID.
+    ...payload,
+    ACTIVED: payload.ACTIVED ?? true,
+    DELETED: payload.DELETED ?? false,
+    REGUSER: user,
+    REGDATE: new Date().toISOString(),
+    HISTORY: [{
+      event: 'CREATE',
+      user: user,
+      date: new Date().toISOString(),
+      data: payload
+    }]
+  };
+
+  const { resource: createdItem } = await container.items.create(newItem);
+  return createdItem;
+}
+
+async function UpdateOneZTProductCosmos(skuid, cambios, user) {
+  if (!skuid) throw new Error('Falta parámetro SKUID');
+  if (!cambios || Object.keys(cambios).length === 0) throw new Error('No se enviaron datos para actualizar');
+
+  const container = await getCosmosContainer();
+  const { resource: currentItem } = await container.item(skuid, skuid).read();
+  if (!currentItem) throw new Error('No se encontró el producto para actualizar');
+
+  const updatedItem = { ...currentItem, ...cambios };
+  updatedItem.MODUSER = user;
+  updatedItem.MODDATE = new Date().toISOString();
+  updatedItem.HISTORY = updatedItem.HISTORY || [];
+  updatedItem.HISTORY.push({
+    event: 'UPDATE',
+    user: user,
+    date: new Date().toISOString(),
+    data: cambios
+  });
+
+  const { resource: replacedItem } = await container.item(skuid, skuid).replace(updatedItem);
+  return replacedItem;
+}
+
+// NOTA: Las funciones Delete y Activate para Cosmos DB seguirían un patrón similar a Update,
+// modificando los campos ACTIVED/DELETED y añadiendo al historial.
+// Por simplicidad, se omite su implementación aquí, pero se pueden añadir siguiendo el ejemplo de UpdateOneZTProductCosmos.
 
 //----------------------------------------
 //FIC: CRUD Products Service with Bitacora
@@ -334,14 +426,8 @@ async function GetProductMethod(bitacora, params, paramString, body, dbServer) {
                 case 'MongoDB':
                     productos = await GetAllZTProducts();
                     break;
-                case 'CosmosDB':
-                    // Compilamos el modelo sobre la conexión de Cosmos DB al vuelo.
-                    // Se añade el tercer argumento 'ZTPRODUCTS' para forzar el nombre de la colección
-         
-                  // El primer argumento 'ZTProductCosmos' es un nombre único para este modelo en
-                  //  esta conexión POR QUE NO SE PUEDE COMPARTIR LA DE LA CONEXION POR DEFECTO QUE ES ATLAS
-                    const ZTProductCosmos = cosmosConnection.model('ZTProductCosmos', ZTProduct.schema, 'ZTPRODUCTS');
-                    productos = await ZTProductCosmos.find({}).lean(); 
+                case 'CosmosDB':                    
+                    productos = await GetAllZTProductsCosmos();
                     break;
                 default:
                     throw new Error(`DBServer no soportado: ${dbServer}`);
@@ -374,8 +460,9 @@ async function GetProductMethod(bitacora, params, paramString, body, dbServer) {
                 case 'MongoDB':
                     producto = await GetOneZTProduct(skuid);
                     break;
-                case 'HANA':
-                    throw new Error('HANA no implementado aún para GetOne');
+                case 'CosmosDB':
+                    producto = await GetOneZTProductCosmos(skuid);
+                    break;
                 default:
                     throw new Error(`DBServer no soportado: ${dbServer}`);
             }
@@ -435,8 +522,9 @@ async function AddProductMethod(bitacora, params, paramString, body, req, dbServ
             case 'MongoDB':
                 result = await AddOneZTProduct(getPayload(req), params.LoggedUser);
                 break;
-            case 'HANA':
-                throw new Error('HANA no implementado aún para AddOne');
+            case 'CosmosDB':
+                result = await AddOneZTProductCosmos(getPayload(req), params.LoggedUser);
+                break;
             default:
                 throw new Error(`DBServer no soportado: ${dbServer}`);
         }
@@ -508,15 +596,13 @@ async function UpdateProductMethod(bitacora, params, paramString, body, req, use
                     result = await ActivateOneZTProduct(skuid);
                 } else {
                     // Usar función de actualización
-                    result = await UpdateOneZTProduct(
-                        skuid,
-                        getPayload(req),
-                        user
-                    );
+                    result = await UpdateOneZTProduct(skuid, getPayload(req), user);
                 }
                 break;
-            case 'HANA':
-                throw new Error('HANA no implementado aún para UpdateOne');
+            case 'CosmosDB':
+                // Para Cosmos, la activación es una actualización. Se puede añadir lógica para diferenciar si es necesario.
+                result = await UpdateOneZTProductCosmos(skuid, getPayload(req), user);
+                break;
             default:
                 throw new Error(`DBServer no soportado: ${dbServer}`);
         }
