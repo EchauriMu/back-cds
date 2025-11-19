@@ -2,32 +2,38 @@
 // IMPORTS
 // ============================================
 const ZTPreciosListas = require('../models/mongodb/ztprecios_listas');
-const { OK, FAIL, BITACORA, DATA, AddMSG } = require('../../middlewares/respPWA.handler');
-const { saveWithAudit } = require('../../helpers/audit-timestap');
+const { OK, FAIL, BITACORA, DATA, AddMSG } = require('../../middlewares/respPWA.handler'); //construye la bitacora
+const { saveWithAudit } = require('../../helpers/audit-timestap'); //guarda con auditoria automatica
 
 // ============================================
 // FUNCIONES DE BASE DE DATOS
 // ============================================
-async function GetAllZTPreciosListasMongo() {
+async function GetAllZTPreciosListasMongo() { //obtiene todas 
   return await ZTPreciosListas.find({
-    $or: [
+    $or: [ //Retorna tanto activas como eliminadas para trazabilidad.
       { ACTIVED: true, DELETED: false },  // activos
       { ACTIVED: false, DELETED: true }   // eliminados lógicamente
     ]
-  }).lean();
+  }).lean(); //Retorna objetos planos (JSON)
 }
 
 
-async function GetOneZTPreciosListaMongo(IDLISTAOK) {
+//Valida que IDLISTAOK no esté vacío
+//Busca UN documento con ese ID
+//Solo si está activo y no eliminado
+//Si no existe → lanza error
+async function GetOneZTPreciosListaMongo(IDLISTAOK) { //obtiene una
   if (!IDLISTAOK) throw new Error('Falta parámetro IDLISTAOK');
   const item = await ZTPreciosListas.findOne({ IDLISTAOK, ACTIVED: true, DELETED: false }).lean();
   if (!item) throw new Error('No se encontró la lista');
   return item;
 }
 
-async function CreateZTPreciosListaMongo(data, user) {
-  const filter = { IDLISTAOK: data.IDLISTAOK };
-  const dataToSave = { ...data };
+//data = objeto con los datos de la nueva lista
+//user = usuario que está creando (para auditoría)
+async function CreateZTPreciosListaMongo(data, user) { //crea //parametros
+  const filter = { IDLISTAOK: data.IDLISTAOK }; //Crea un filtro para buscar el documento por su ID.
+  const dataToSave = { ...data }; //Copia el objeto data en una nueva variable dataToSave.
 
   // Asegurarse de que SKUSIDS sea un arreglo, incluso si viene como string JSON
   if (dataToSave.SKUSIDS && typeof dataToSave.SKUSIDS === 'string') {
@@ -73,7 +79,7 @@ async function GetZTPreciosListasBySKUIDMongo(skuid) {
 // ============================================
 
 async function GetAllMethod(bitacora, params, paramString, body, dbServer) {
-  let data = DATA();
+  let data = DATA(); //Crea un objeto data vacío para llenar de información.
 
   // configurar contexto de data
   data.process        = 'Obtener todas las listas de precios';
@@ -84,7 +90,7 @@ async function GetAllMethod(bitacora, params, paramString, body, dbServer) {
   data.api            = '/api/ztprecios‑listas/preciosListasCRUD';
   data.queryString    = paramString;
 
-  // propagar en bitácora
+  // propagar en bitácora. Llena el objeto bitacora con la misma información que en data.
   bitacora.processType  = params.ProcessType || '';
   bitacora.loggedUser   = params.LoggedUser || '';
   bitacora.dbServer     = dbServer;
@@ -92,8 +98,8 @@ async function GetAllMethod(bitacora, params, paramString, body, dbServer) {
   bitacora.process      = 'Obtener todas las listas de precios';
 
   try {
-    let result;
-    switch (dbServer) {
+    let result; //Declara una variable vacía que va a guardar el resultado de la búsqueda.
+    switch (dbServer) { //Ejecuta la función de base de datos según cuál BD se use.
       case 'MongoDB':
         result = await GetAllZTPreciosListasMongo();
         break;
@@ -101,12 +107,12 @@ async function GetAllMethod(bitacora, params, paramString, body, dbServer) {
         throw new Error(`DBServer no soportado: ${dbServer}`);
     }
 
-    data.dataRes   = result;
+    data.dataRes   = result; //Agrega el resultado (array de listas) al objeto data.
     data.messageUSR = 'Listas obtenidas correctamente';
     data.messageDEV = 'GetAllZTPreciosListasMongo ejecutado sin errores';
-    bitacora = AddMSG(bitacora, data, 'OK', 200, true);
+    bitacora = AddMSG(bitacora, data, 'OK', 200, true); //Agrega el mensaje data a la bitacora con información de éxito.
     bitacora.success = true;
-    return bitacora;
+    return bitacora; //Retorna la bitácora completa con toda la información de la operación exitosa.
 
   } catch (error) {
     data.messageUSR = 'Error al obtener las listas de precios';

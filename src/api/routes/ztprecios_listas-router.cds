@@ -1,7 +1,7 @@
 using { mongodb as myur } from '../models/ztprecios_listas';
 
 @impl: 'src/api/controllers/ztprecios_listas-controller.js'
-
+//Define un servicio (una API) con su ruta.
 service ZTPreciosListasService @(path:'/api/ztprecios-listas') {
 
   // Entidad principal
@@ -10,7 +10,7 @@ service ZTPreciosListasService @(path:'/api/ztprecios-listas') {
   // CRUD de Listas de Precios
   @Core.Description: 'CRUD de Listas de Precios'
   @path: 'preciosListasCRUD'
-  action preciosListasCRUD(
+  action preciosListasCRUD( //Define los parámetros que el cliente debe enviar.
     ProcessType: String,
     IDLISTAOK: String,
     IDINSTITUTOOK: String,
@@ -28,7 +28,7 @@ service ZTPreciosListasService @(path:'/api/ztprecios-listas') {
     DELETED: Boolean
   ) returns array of PreciosListas;
 
-  // Acción para actualizar SKUSIDs
+  // Acción para actualizar SKUSIDs . Otra acción para actualizar solo los SKUs.
   @Core.Description: 'Actualiza los SKUs de una Lista de Precios'
   @path: 'updateSKUSIDs'
   action updateSKUSIDs(
