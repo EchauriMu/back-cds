@@ -35,12 +35,19 @@ async function CreateZTPreciosListaMongo(data, user) { //crea //parametros
   const filter = { IDLISTAOK: data.IDLISTAOK }; //Crea un filtro para buscar el documento por su ID.
   const dataToSave = { ...data }; //Copia el objeto data en una nueva variable dataToSave.
 
-  // Asegurarse de que SKUSIDS sea un arreglo, incluso si viene como string JSON
-  if (dataToSave.SKUSIDS && typeof dataToSave.SKUSIDS === 'string') {
-    try {
-      dataToSave.SKUSIDS = JSON.parse(dataToSave.SKUSIDS);
-    } catch (e) {
-      throw new Error('El campo SKUSIDS no es un arreglo JSON válido.');
+  // Asegurarse de que SKUSIDS sea un arreglo
+  // Puede venir como:
+  // 1. Array directo (correcto): ["SKU1", "SKU2"]
+  // 2. String JSON (si axios lo stringificó): "[\"SKU1\",\"SKU2\"]"
+  if (dataToSave.SKUSIDS) {
+    if (typeof dataToSave.SKUSIDS === 'string') {
+      try {
+        dataToSave.SKUSIDS = JSON.parse(dataToSave.SKUSIDS);
+      } catch (e) {
+        throw new Error('El campo SKUSIDS no es un arreglo JSON válido.');
+      }
+    } else if (!Array.isArray(dataToSave.SKUSIDS)) {
+      throw new Error('El campo SKUSIDS debe ser un array o string JSON válido.');
     }
   }
   return await saveWithAudit(ZTPreciosListas, filter, dataToSave, user, 'CREATE');
@@ -48,7 +55,24 @@ async function CreateZTPreciosListaMongo(data, user) { //crea //parametros
 
 async function UpdateZTPreciosListaMongo(IDLISTAOK, data, user) {
   const filter = { IDLISTAOK };
-  return await saveWithAudit(ZTPreciosListas, filter, data, user, 'UPDATE');
+  const dataToSave = { ...data };
+
+  // Asegurarse de que SKUSIDS sea un arreglo
+  // Puede venir como:
+  // 1. Array directo (correcto): ["SKU1", "SKU2"]
+  // 2. String JSON (si axios lo stringificó): "[\"SKU1\",\"SKU2\"]"
+  if (dataToSave.SKUSIDS) {
+    if (typeof dataToSave.SKUSIDS === 'string') {
+      try {
+        dataToSave.SKUSIDS = JSON.parse(dataToSave.SKUSIDS);
+      } catch (e) {
+        throw new Error('El campo SKUSIDS no es un arreglo JSON válido.');
+      }
+    } else if (!Array.isArray(dataToSave.SKUSIDS)) {
+      throw new Error('El campo SKUSIDS debe ser un array o string JSON válido.');
+    }
+  }
+  return await saveWithAudit(ZTPreciosListas, filter, dataToSave, user, 'UPDATE');
 }
 
 async function DeleteLogicZTPreciosListaMongo(IDLISTAOK, user) {
