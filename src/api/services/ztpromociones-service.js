@@ -1,6 +1,7 @@
 // ============================================
 // IMPORTS
 // ============================================
+const { getCosmosDatabase } = require('../../config/connectToMongoDB.config');
 const mongoose = require('mongoose');
 const ZTPromociones = require('../models/mongodb/ztpromociones');
 const { OK, FAIL, BITACORA, DATA, AddMSG } = require('../../middlewares/respPWA.handler');
@@ -10,10 +11,28 @@ const { saveWithAudit } = require('../../helpers/audit-timestap');
 // UTIL: OBTENER PAYLOAD DESDE CDS/EXPRESS
 // ============================================
 function getPayload(req) {
-  // Prioridad: req.req.body (Express) > req.data (CDS) > null
-  const payload = req.req?.body || req.data || null;
-  console.log('🔍 getPayload - payload extraído:', JSON.stringify(payload, null, 2));
+  const payload = req.req?.body || req.data || null;  
   return payload;
+}
+
+// ============================================
+// UTIL: OBTENER CONTENEDOR DE COSMOS DB
+// ============================================
+async function getCosmosContainer(containerName, partitionKeyPath) {
+  const database = getCosmosDatabase();
+  if (!database) {
+    throw new Error('La conexión con Cosmos DB no está disponible.');
+  }
+  const { container } = await database.containers.createIfNotExists({
+    id: containerName,
+    partitionKey: { paths: [partitionKeyPath] }
+  });
+  return container;
+}
+
+// Helper específico para este servicio
+async function getPromocionesCosmosContainer() {
+  return getCosmosContainer('ZTPROMOCIONES', '/IdPromoOK');
 }
 
 // ============================================
@@ -27,15 +46,14 @@ function getPayload(req) {
 async function crudZTPromociones(req) {
   
   let bitacora = BITACORA();
-  let data = DATA();
-  
+  let data = DATA();  
+
   try {
     // 1. EXTRAER Y SERIALIZAR PARÁMETROS
     const params = req.req?.query || {};
     const body = req.req?.body;
     const paramString = params ? new URLSearchParams(params).toString().trim() : '';
-    const { ProcessType, LoggedUser, DBServer, IdPromoOK } = params;
-    
+    const { ProcessType, LoggedUser, DBServer, IdPromoOK } = params;    
     // 2. VALIDAR PARÁMETROS OBLIGATORIOS
     if (!ProcessType) {
       data.process = 'Validación de parámetros obligatorios';
@@ -71,6 +89,9 @@ async function crudZTPromociones(req) {
         bitacora = await GetPromocionMethod(bitacora, params, paramString, body, req, dbServer);
         if (!bitacora.success) {
           bitacora.finalRes = true;
+          if (req?.error) {
+            req.error(bitacora.status, bitacora.messageDEV);
+          }
           return FAIL(bitacora);
         }
         break;
@@ -82,6 +103,9 @@ async function crudZTPromociones(req) {
           data.messageDEV = 'IdPromoOK es requerido para la operación GetOne';
           bitacora = AddMSG(bitacora, data, 'FAIL', 400, true);
           bitacora.finalRes = true;
+          if (req?.error) {
+            req.error(400, data.messageDEV);
+          }
           return FAIL(bitacora);
         }
         bitacora = await GetPromocionMethod(bitacora, params, paramString, body, req, dbServer);
@@ -387,6 +411,160 @@ async function ActivateOneZTPromocion(idPromoOK) {
   return promo;
 }
 
+// ============================================
+// CRUD BÁSICO (COSMOS DB) - Capa 1
+// ============================================
+async function GetAllZTPromocionesCosmos() {
+  const container = await getPromocionesCosmosContainer();
+  // Se quita el ORDER BY para evitar el error de índice compuesto en Cosmos DB.
+  // La ordenación se realizará en el código de la aplicación.
+  const query = "SELECT * from c";
+  const { resources: items } = await container.items.query(query).fetchAll();
+
+  // Ordenar los resultados en JavaScript, replicando la lógica de MongoDB.
+  items.sort((a, b) => {
+    // 1. Poner los activos (DELETED: false) primero.
+    if (a.DELETED !== b.DELETED) {
+      return a.DELETED ? 1 : -1;
+    }
+    // 2. Para los que tienen el mismo estado, ordenar por fecha de registro descendente (más nuevos primero).
+    return new Date(b.REGDATE) - new Date(a.REGDATE);
+  });
+
+  return items;
+}
+
+async function GetOneZTPromocionCosmos(idPromoOK) {
+  if (!idPromoOK) throw new Error('IdPromoOK es requerido');
+  const container = await getPromocionesCosmosContainer();
+  const { resource: item } = await container.item(idPromoOK, idPromoOK).read();
+  if (!item || item.DELETED === true) throw new Error(`No se encontró la promoción con IdPromoOK: ${idPromoOK}`);
+  return item;
+}
+
+async function AddOneZTPromocionCosmos(payload, user) {
+  const required = ['IdPromoOK', 'Titulo', 'FechaIni', 'FechaFin'];
+  const missing = required.filter(k => !payload[k]);
+  if (missing.length) throw new Error(`Faltan campos obligatorios: ${missing.join(', ')}`);
+  if (!user) throw new Error('Usuario requerido para auditoría');
+
+  const container = await getPromocionesCosmosContainer();
+
+  const { resource: existing } = await container.item(payload.IdPromoOK, payload.IdPromoOK).read().catch(() => ({}));
+  if (existing) throw new Error(`Ya existe una promoción con IdPromoOK: ${payload.IdPromoOK}`);
+
+  // Validaciones de negocio
+  if (!payload.ProductosAplicables || payload.ProductosAplicables.length === 0) {
+    throw new Error('Debe especificar al menos un producto aplicable');
+  }
+  const tipoDescuento = payload.TipoDescuento || 'PORCENTAJE';
+  if (tipoDescuento === 'PORCENTAJE' && (!payload.DescuentoPorcentaje || payload.DescuentoPorcentaje <= 0 || payload.DescuentoPorcentaje > 100)) {
+    throw new Error('Debe especificar un porcentaje de descuento válido entre 1 y 100');
+  }
+  if (tipoDescuento === 'MONTO_FIJO' && (!payload.DescuentoMonto || payload.DescuentoMonto <= 0)) {
+    throw new Error('Debe especificar un monto de descuento válido mayor a 0');
+  }
+  if (new Date(payload.FechaFin) <= new Date(payload.FechaIni)) {
+    throw new Error('La fecha fin debe ser posterior a la fecha inicio');
+  }
+
+  const newItem = {
+    id: payload.IdPromoOK,
+    partitionKey: payload.IdPromoOK,
+    ...payload,
+    ACTIVED: payload.ACTIVED ?? true,
+    DELETED: payload.DELETED ?? false,
+    TipoDescuento: tipoDescuento,
+    PermiteAcumulacion: payload.PermiteAcumulacion ?? false,
+    LimiteUsos: payload.LimiteUsos || null,
+    UsosActuales: 0,
+    REGUSER: user,
+    REGDATE: new Date().toISOString(),
+    HISTORY: [{
+      user: user,
+      action: 'CREATE',
+      date: new Date().toISOString(),
+      changes: payload
+    }]
+  };
+
+  const { resource: createdItem } = await container.items.create(newItem);
+
+  return createdItem;
+}
+
+async function UpdateOneZTPromocionCosmos(idPromoOK, payload, user) {
+  if (!idPromoOK) throw new Error('IdPromoOK es requerido');
+  if (!user) throw new Error('Usuario requerido para auditoría');
+
+  const container = await getPromocionesCosmosContainer();
+  const { resource: currentItem } = await container.item(idPromoOK, idPromoOK).read();
+  if (!currentItem || currentItem.DELETED) throw new Error(`No se encontró la promoción con IdPromoOK: ${idPromoOK}`);
+
+  // Validaciones de negocio (similar a la versión de Mongo)
+  // ...
+
+  const updatedItem = {
+    ...currentItem,
+    ...payload,
+    id: currentItem.id,
+    partitionKey: currentItem.partitionKey,
+    MODUSER: user,
+    MODDATE: new Date().toISOString(),
+    HISTORY: [...(currentItem.HISTORY || []), { user, action: 'UPDATE', date: new Date().toISOString(), changes: payload }]
+  };
+
+  const { resource: replacedItem } = await container.item(currentItem.id, currentItem.partitionKey).replace(updatedItem);
+  return replacedItem;
+}
+
+async function DeleteLogicZTPromocionCosmos(idPromoOK, user) {
+  if (!idPromoOK) throw new Error('IdPromoOK es requerido');
+  if (!user) throw new Error('Usuario requerido para auditoría');
+
+  const container = await getPromocionesCosmosContainer();
+  const { resource: currentItem } = await container.item(idPromoOK, idPromoOK).read();
+  if (!currentItem || currentItem.DELETED) throw new Error(`No se encontró la promoción con IdPromoOK: ${idPromoOK}`);
+
+  const updatedItem = {
+    ...currentItem,
+    ACTIVED: false,
+    DELETED: true,
+    MODUSER: user,
+    MODDATE: new Date().toISOString(),
+    HISTORY: [...(currentItem.HISTORY || []), { user, action: 'DELETE_LOGIC', date: new Date().toISOString(), changes: { ACTIVED: false, DELETED: true } }]
+  };
+
+  const { resource: replacedItem } = await container.item(currentItem.id, currentItem.partitionKey).replace(updatedItem);
+  return replacedItem;
+}
+
+async function DeleteHardZTPromocionCosmos(idPromoOK) {
+  if (!idPromoOK) throw new Error('IdPromoOK es requerido');
+  const container = await getPromocionesCosmosContainer();
+  await container.item(idPromoOK, idPromoOK).delete();
+  return { mensaje: 'Promoción eliminada permanentemente de Cosmos DB', IdPromoOK: idPromoOK };
+}
+
+async function ActivateOneZTPromocionCosmos(idPromoOK, user) {
+  if (!idPromoOK) throw new Error('IdPromoOK es requerido');
+  const container = await getPromocionesCosmosContainer();
+  const { resource: currentItem } = await container.item(idPromoOK, idPromoOK).read();
+  if (!currentItem) throw new Error(`No se encontró la promoción con IdPromoOK: ${idPromoOK}`);
+
+  const updatedItem = {
+    ...currentItem,
+    ACTIVED: true,
+    DELETED: false,
+    MODUSER: user,
+    MODDATE: new Date().toISOString(),
+    HISTORY: [...(currentItem.HISTORY || []), { user, action: 'ACTIVATE', date: new Date().toISOString(), changes: { ACTIVED: true, DELETED: false } }]
+  };
+
+  const { resource: replacedItem } = await container.item(currentItem.id, currentItem.partitionKey).replace(updatedItem);
+  return replacedItem;
+}
+
 //####################################################################################
 //FIC: Methods for each operation with Bitacora - Capa 2
 //####################################################################################
@@ -425,8 +603,9 @@ async function GetPromocionMethod(bitacora, params, paramString, body, req, dbSe
                 case 'MongoDB':
                     promociones = await GetAllZTPromociones();
                     break;
-                case 'HANA':
-                    throw new Error('HANA no implementado aún para GetAll');
+                case 'CosmosDB':
+                    promociones = await GetAllZTPromocionesCosmos();
+                    break;
                 default:
                     throw new Error(`DBServer no soportado: ${dbServer}`);
             }
@@ -458,8 +637,9 @@ async function GetPromocionMethod(bitacora, params, paramString, body, req, dbSe
                 case 'MongoDB':
                     promocion = await GetOneZTPromocion(idPromoOK);
                     break;
-                case 'HANA':
-                    throw new Error('HANA no implementado aún para GetOne');
+                case 'CosmosDB':
+                    promocion = await GetOneZTPromocionCosmos(idPromoOK);
+                    break;
                 default:
                     throw new Error(`DBServer no soportado: ${dbServer}`);
             }
@@ -525,8 +705,9 @@ async function AddPromocionMethod(bitacora, params, paramString, body, req, dbSe
             case 'MongoDB':
                 result = await AddOneZTPromocion(getPayload(req), params.LoggedUser);
                 break;
-            case 'HANA':
-                throw new Error('HANA no implementado aún para AddOne');
+            case 'CosmosDB':
+                result = await AddOneZTPromocionCosmos(getPayload(req), params.LoggedUser);
+                break;
             default:
                 throw new Error(`DBServer no soportado: ${dbServer}`);
         }
@@ -554,6 +735,7 @@ async function AddPromocionMethod(bitacora, params, paramString, body, req, dbSe
             data.messageDEV = error.message;
             bitacora = AddMSG(bitacora, data, 'FAIL', 400, true);
         } else {
+            // Cualquier otro error de negocio o BD
             data.messageUSR = 'Error al crear la promoción';
             data.messageDEV = error.message;
             bitacora = AddMSG(bitacora, data, 'FAIL', 500, true);
@@ -598,10 +780,8 @@ async function UpdatePromocionMethod(bitacora, params, paramString, body, req, u
         switch (dbServer) {
             case 'MongoDB':
                 if (isActivate) {
-                    // Usar función de activación
-                    result = await ActivateOneZTPromocion(idPromoOK);
+                    result = await ActivateOneZTPromocion(idPromoOK, user);
                 } else {
-                    // Usar función de actualización
                     result = await UpdateOneZTPromocion(
                         idPromoOK,
                         getPayload(req),
@@ -609,8 +789,13 @@ async function UpdatePromocionMethod(bitacora, params, paramString, body, req, u
                     );
                 }
                 break;
-            case 'HANA':
-                throw new Error('HANA no implementado aún para UpdateOne');
+            case 'CosmosDB':
+                if (isActivate) {
+                    result = await ActivateOneZTPromocionCosmos(idPromoOK, user);
+                } else {
+                    result = await UpdateOneZTPromocionCosmos(idPromoOK, getPayload(req), user);
+                }
+                break;
             default:
                 throw new Error(`DBServer no soportado: ${dbServer}`);
         }
@@ -678,15 +863,18 @@ async function DeletePromocionMethod(bitacora, params, IdPromoOK, req, user, dbS
         switch (dbServer) {
             case 'MongoDB':
                 if (isHardDelete) {
-                    // Usar función de eliminación física
                     result = await DeleteHardZTPromocion(IdPromoOK);
                 } else {
-                    // Usar función de eliminación lógica
                     result = await DeleteLogicZTPromocion(IdPromoOK, user);
                 }
                 break;
-            case 'HANA':
-                throw new Error('HANA no implementado aún para Delete');
+            case 'CosmosDB':
+                if (isHardDelete) {
+                    result = await DeleteHardZTPromocionCosmos(IdPromoOK);
+                } else {
+                    result = await DeleteLogicZTPromocionCosmos(IdPromoOK, user);
+                }
+                break;
             default:
                 throw new Error(`DBServer no soportado: ${dbServer}`);
         }
@@ -754,5 +942,13 @@ module.exports = {
     UpdateOneZTPromocion,
     DeleteLogicZTPromocion,
     DeleteHardZTPromocion,
-    ActivateOneZTPromocion
+    ActivateOneZTPromocion,
+    // Cosmos DB Functions
+    GetAllZTPromocionesCosmos,
+    GetOneZTPromocionCosmos,
+    AddOneZTPromocionCosmos,
+    UpdateOneZTPromocionCosmos,
+    DeleteLogicZTPromocionCosmos,
+    DeleteHardZTPromocionCosmos,
+    ActivateOneZTPromocionCosmos
 };

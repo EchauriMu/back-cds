@@ -1,9 +1,30 @@
 // ============================================
 // IMPORTS
 // ============================================
+const { getCosmosDatabase } = require('../../config/connectToMongoDB.config');
 const ZTPreciosListas = require('../models/mongodb/ztprecios_listas');
 const { OK, FAIL, BITACORA, DATA, AddMSG } = require('../../middlewares/respPWA.handler'); //construye la bitacora
 const { saveWithAudit } = require('../../helpers/audit-timestap'); //guarda con auditoria automatica
+
+// ============================================
+// UTIL: OBTENER CONTENEDOR DE COSMOS DB
+// ============================================
+async function getCosmosContainer(containerName, partitionKeyPath) {
+  const database = getCosmosDatabase();
+  if (!database) {
+    throw new Error('La conexión con Cosmos DB no está disponible.');
+  }
+  const { container } = await database.containers.createIfNotExists({
+    id: containerName,
+    partitionKey: { paths: [partitionKeyPath] }
+  });
+  return container;
+}
+
+// Helper específico para este servicio
+async function getPreciosListasCosmosContainer() {
+  return getCosmosContainer('ZTPRECIOS_LISTAS', '/IDLISTAOK');
+}
 
 // ============================================
 // FUNCIONES DE BASE DE DATOS
@@ -99,6 +120,152 @@ async function GetZTPreciosListasBySKUIDMongo(skuid) {
 }
 
 // ============================================
+// FUNCIONES DE BASE DE DATOS (COSMOS DB)
+// ============================================
+async function GetAllZTPreciosListasCosmos() {
+  const container = await getPreciosListasCosmosContainer();
+  const query = "SELECT * from c WHERE c.DELETED != true";
+  const { resources: items } = await container.items.query(query).fetchAll();
+  return items;
+}
+
+async function GetOneZTPreciosListaCosmos(IDLISTAOK) {
+  if (!IDLISTAOK) throw new Error('Falta parámetro IDLISTAOK');
+  const container = await getPreciosListasCosmosContainer();
+  const { resource: item } = await container.item(IDLISTAOK, IDLISTAOK).read();
+  if (!item) throw new Error('No se encontró la lista');
+  return item;
+}
+
+async function CreateZTPreciosListaCosmos(data, user) {
+  if (!data || !data.IDLISTAOK) throw new Error('Faltan datos o el IDLISTAOK');
+
+  const container = await getPreciosListasCosmosContainer();
+  const { resource: existing } = await container.item(data.IDLISTAOK, data.IDLISTAOK).read().catch(() => ({}));
+  if (existing) throw new Error(`Ya existe una lista con el IDLISTAOK: ${data.IDLISTAOK}`);
+
+  let skusids = data.SKUSIDS || [];
+  if (typeof skusids === 'string') {
+    try {
+      skusids = JSON.parse(skusids);
+    } catch (e) {
+      throw new Error('El campo SKUSIDS no es un arreglo JSON válido.');
+    }
+  }
+  if (!Array.isArray(skusids)) {
+    throw new Error('El campo SKUSIDS debe ser un array.');
+  }
+
+  const newItem = {
+    id: data.IDLISTAOK,
+    partitionKey: data.IDLISTAOK,
+    ...data,
+    SKUSIDS: skusids,
+    ACTIVED: data.ACTIVED ?? true,
+    DELETED: data.DELETED ?? false,
+    REGUSER: user,
+    REGDATE: new Date().toISOString(),
+    HISTORY: [{
+      user: user,
+      event: "CREATE",
+      date: new Date().toISOString(),
+      changes: data
+    }]
+  };
+
+  const { resource: createdItem } = await container.items.create(newItem);
+  return createdItem;
+}
+
+async function UpdateZTPreciosListaCosmos(IDLISTAOK, data, user) {
+  if (!IDLISTAOK) throw new Error('Falta parámetro IDLISTAOK');
+  const container = await getPreciosListasCosmosContainer();
+  const { resource: currentItem } = await container.item(IDLISTAOK, IDLISTAOK).read();
+  if (!currentItem) throw new Error(`No se encontró la lista para actualizar con IDLISTAOK: ${IDLISTAOK}`);
+
+  let skusids = data.SKUSIDS;
+  if (skusids) {
+    if (typeof skusids === 'string') {
+      try {
+        skusids = JSON.parse(skusids);
+      } catch (e) {
+        throw new Error('El campo SKUSIDS no es un arreglo JSON válido.');
+      }
+    }
+    if (!Array.isArray(skusids)) {
+      throw new Error('El campo SKUSIDS debe ser un array.');
+    }
+  }
+
+  const updatedItem = {
+    ...currentItem,
+    ...data,
+    SKUSIDS: skusids ?? currentItem.SKUSIDS,
+    id: currentItem.id,
+    partitionKey: currentItem.partitionKey,
+    MODUSER: user,
+    MODDATE: new Date().toISOString(),
+    HISTORY: [...(currentItem.HISTORY || []), { user, action: 'UPDATE', date: new Date().toISOString(), changes: data }]
+  };
+
+  const { resource: replacedItem } = await container.item(currentItem.id, currentItem.partitionKey).replace(updatedItem);
+  return replacedItem;
+}
+
+async function DeleteLogicZTPreciosListaCosmos(IDLISTAOK, user) {
+  if (!IDLISTAOK) throw new Error('Falta parámetro IDLISTAOK');
+  const container = await getPreciosListasCosmosContainer();
+  const { resource: currentItem } = await container.item(IDLISTAOK, IDLISTAOK).read();
+  if (!currentItem) throw new Error(`No se encontró la lista para borrado lógico con IDLISTAOK: ${IDLISTAOK}`);
+
+  const updatedItem = {
+    ...currentItem,
+    ACTIVED: false,
+    DELETED: true,
+    MODUSER: user,
+    MODDATE: new Date().toISOString(),
+    HISTORY: [...(currentItem.HISTORY || []), { user, action: 'DELETE_LOGIC', date: new Date().toISOString(), changes: { ACTIVED: false, DELETED: true } }]
+  };
+
+  const { resource: replacedItem } = await container.item(currentItem.id, currentItem.partitionKey).replace(updatedItem);
+  return replacedItem;
+}
+
+async function DeleteHardZTPreciosListaCosmos(IDLISTAOK) {
+  if (!IDLISTAOK) throw new Error('Falta parámetro IDLISTAOK');
+  const container = await getPreciosListasCosmosContainer();
+  await container.item(IDLISTAOK, IDLISTAOK).delete();
+  return { message: 'Lista eliminada permanentemente de Cosmos DB', IDLISTAOK };
+}
+
+async function ActivateZTPreciosListaCosmos(IDLISTAOK, user) {
+  if (!IDLISTAOK) throw new Error('Falta parámetro IDLISTAOK');
+  const container = await getPreciosListasCosmosContainer();
+  const { resource: currentItem } = await container.item(IDLISTAOK, IDLISTAOK).read();
+  if (!currentItem) throw new Error(`No se encontró la lista para activar con IDLISTAOK: ${IDLISTAOK}`);
+
+  const updatedItem = {
+    ...currentItem,
+    ACTIVED: true,
+    DELETED: false,
+    MODUSER: user,
+    MODDATE: new Date().toISOString(),
+    HISTORY: [...(currentItem.HISTORY || []), { user, action: 'ACTIVATE', date: new Date().toISOString(), changes: { ACTIVED: true, DELETED: false } }]
+  };
+
+  const { resource: replacedItem } = await container.item(currentItem.id, currentItem.partitionKey).replace(updatedItem);
+  return replacedItem;
+}
+
+async function GetZTPreciosListasBySKUIDCosmos(skuid) {
+  if (!skuid) throw new Error('Falta parámetro SKUID');
+  const container = await getPreciosListasCosmosContainer();
+  const querySpec = { query: "SELECT * FROM c WHERE ARRAY_CONTAINS(c.SKUSIDS, @skuid) AND c.DELETED != true", parameters: [{ name: "@skuid", value: skuid }] };
+  const { resources: items } = await container.items.query(querySpec).fetchAll();
+  return items;
+}
+
+// ============================================
 // MÉTODOS LOCALES CON BITÁCORA
 // ============================================
 
@@ -126,6 +293,9 @@ async function GetAllMethod(bitacora, params, paramString, body, dbServer) {
     switch (dbServer) { //Ejecuta la función de base de datos según cuál BD se use.
       case 'MongoDB':
         result = await GetAllZTPreciosListasMongo();
+        break;
+      case 'CosmosDB':
+        result = await GetAllZTPreciosListasCosmos();
         break;
       default:
         throw new Error(`DBServer no soportado: ${dbServer}`);
@@ -169,6 +339,9 @@ async function GetOneMethod(bitacora, params, IDLISTAOK, dbServer) {
       case 'MongoDB':
         result = await GetOneZTPreciosListaMongo(IDLISTAOK);
         break;
+      case 'CosmosDB':
+        result = await GetOneZTPreciosListaCosmos(IDLISTAOK);
+        break;
       default:
         throw new Error(`DBServer no soportado: ${dbServer}`);
     }
@@ -210,6 +383,9 @@ async function AddOneMethod(bitacora, params, body, req, dbServer) {
     switch (dbServer) {
       case 'MongoDB':
         result = await CreateZTPreciosListaMongo(body, params.LoggedUser);
+        break;
+      case 'CosmosDB':
+        result = await CreateZTPreciosListaCosmos(body, params.LoggedUser);
         break;
       default:
         throw new Error(`DBServer no soportado: ${dbServer}`);
@@ -253,6 +429,9 @@ async function UpdateOneMethod(bitacora, params, IDLISTAOK, req, user, dbServer)
       case 'MongoDB':
         result = await UpdateZTPreciosListaMongo(IDLISTAOK, req.req.body, user);
         break;
+      case 'CosmosDB':
+        result = await UpdateZTPreciosListaCosmos(IDLISTAOK, req.req.body, user);
+        break;
       default:
         throw new Error(`DBServer no soportado: ${dbServer}`);
     }
@@ -294,6 +473,9 @@ async function DeleteLogicMethod(bitacora, params, IDLISTAOK, user, dbServer) {
     switch (dbServer) {
       case 'MongoDB':
         result = await DeleteLogicZTPreciosListaMongo(IDLISTAOK, params.LoggedUser);
+        break;
+      case 'CosmosDB':
+        result = await DeleteLogicZTPreciosListaCosmos(IDLISTAOK, params.LoggedUser);
         break;
       default:
         throw new Error(`DBServer no soportado: ${dbServer}`);
@@ -343,6 +525,9 @@ async function DeleteHardMethod(bitacora, params, IDLISTAOK, dbServer) {
       case 'MongoDB':
         result = await DeleteHardZTPreciosListaMongo(IDLISTAOK);
         break;
+      case 'CosmosDB':
+        result = await DeleteHardZTPreciosListaCosmos(IDLISTAOK);
+        break;
       default:
         throw new Error(`DBServer no soportado: ${dbServer}`);
     }
@@ -384,6 +569,9 @@ async function ActivateOneMethod(bitacora, params, IDLISTAOK, user, dbServer) {
     switch (dbServer) {
       case 'MongoDB':
         result = await ActivateZTPreciosListaMongo(IDLISTAOK, params.LoggedUser);
+        break;
+      case 'CosmosDB':
+        result = await ActivateZTPreciosListaCosmos(IDLISTAOK, params.LoggedUser);
         break;
       default:
         throw new Error(`DBServer no soportado: ${dbServer}`);
@@ -428,6 +616,9 @@ async function GetBySKUIDMethod(bitacora, params, skuid, dbServer) {
     switch (dbServer) {
       case 'MongoDB':
         result = await GetZTPreciosListasBySKUIDMongo(skuid);
+        break;
+      case 'CosmosDB':
+        result = await GetZTPreciosListasBySKUIDCosmos(skuid);
         break;
       default:
         throw new Error(`DBServer no soportado: ${dbServer}`);
@@ -613,10 +804,14 @@ module.exports = {
   DeleteLogicZTPreciosListaMongo,
   DeleteHardZTPreciosListaMongo,
   ActivateZTPreciosListaMongo,
-  GetZTPreciosListasBySKUIDMongo
+  GetZTPreciosListasBySKUIDMongo,
+  // Cosmos DB Functions
+  GetAllZTPreciosListasCosmos,
+  GetOneZTPreciosListaCosmos,
+  CreateZTPreciosListaCosmos,
+  UpdateZTPreciosListaCosmos,
+  DeleteLogicZTPreciosListaCosmos,
+  DeleteHardZTPreciosListaCosmos,
+  ActivateZTPreciosListaCosmos,
+  GetZTPreciosListasBySKUIDCosmos
 };
-
-
-
-
-

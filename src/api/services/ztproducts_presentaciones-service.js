@@ -342,6 +342,7 @@ async function AddOneZTProductsPresentacionCosmos(payload, user) {
       id: IdPresentaOK,
       partitionKey: IdPresentaOK, // Clave de partición
       IdPresentaOK: IdPresentaOK, // Campo en mayúsculas para consistencia
+      IDPRESENTAOK: IdPresentaOK, // Campo de la clave de partición, debe estar en mayúsculas.
       ...presentationPayload,
       PropiedadesExtras: propiedades,
       ACTIVED: presentationPayload.ACTIVED ?? true,
