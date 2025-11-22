@@ -1,6 +1,7 @@
 // ============================================
 // IMPORTS
 // ============================================
+const { getCosmosDatabase } = require('../../config/connectToMongoDB.config');
 const { ZTProduct_FILES } = require('../models/mongodb/ztproducts_files');
 const { OK, FAIL, BITACORA, DATA, AddMSG } = require('../../middlewares/respPWA.handler');
 const { handleUploadZTProductFileCDS, handleUpdateZTProductFileCDS } = require('../../helpers/azureUpload.helper');
@@ -12,6 +13,20 @@ const { saveWithAudit } = require('../../helpers/audit-timestap');
 function getPayload(req) {
   return req.data || null;
 }
+
+// ============================================
+// UTIL: OBTENER CONTENEDOR DE COSMOS DB
+// ============================================
+async function getCosmosFilesContainer() {
+  const database = getCosmosDatabase();
+  if (!database) {
+    throw new Error('La conexión con Cosmos DB no está disponible.');
+  }
+  const containerName = 'ZTPRODUCTS_FILES';
+  const { container } = await database.containers.createIfNotExists({ id: containerName, partitionKey: { paths: ["/FILEID"] } });
+  return container;
+}
+
 
 
 // ============================================
@@ -112,6 +127,46 @@ async function GetZTProductFilesBySKUID(skuid) {
 async function GetZTProductFilesByIdPresentaOK(idPresentaOK) {
   if (!idPresentaOK) throw new Error('Falta parámetro IdPresentaOK');
   return await ZTProduct_FILES.find({ IdPresentaOK: idPresentaOK }).lean();
+}
+
+// ============================================
+// CRUD BÁSICO (COSMOS DB SDK)
+// ============================================
+async function GetAllZTProductFilesCosmos() {
+  const container = await getCosmosFilesContainer();
+  const { resources: items } = await container.items.query("SELECT * from c WHERE c.DELETED != true").fetchAll();
+  return items;
+}
+
+async function GetOneZTProductFileCosmos(fileid) {
+  if (!fileid) throw new Error('Falta parámetro FILEID');
+  const container = await getCosmosFilesContainer();
+  // La clave de partición es FILEID, por lo que se usa fileid para el id y para la clave de partición.
+  const { resource: item } = await container.item(fileid, fileid).read();
+  if (!item) throw new Error('No se encontró el archivo en Cosmos DB');
+  return item;
+}
+
+async function GetZTProductFilesBySKUIDCosmos(skuid) {
+  if (!skuid) throw new Error('Falta parámetro SKUID');
+  const container = await getCosmosFilesContainer();
+  const querySpec = {
+    query: "SELECT * FROM c WHERE c.SKUID = @skuid AND c.DELETED != true",
+    parameters: [{ name: "@skuid", value: skuid }]
+  };
+  const { resources: items } = await container.items.query(querySpec).fetchAll();
+  return items;
+}
+
+async function GetZTProductFilesByIdPresentaOKCosmos(idPresentaOK) {
+  if (!idPresentaOK) throw new Error('Falta parámetro IdPresentaOK');
+  const container = await getCosmosFilesContainer();
+  const querySpec = {
+    query: "SELECT * FROM c WHERE c.IdPresentaOK = @idPresentaOK AND c.DELETED != true",
+    parameters: [{ name: "@idPresentaOK", value: idPresentaOK }]
+  };
+  const { resources: items } = await container.items.query(querySpec).fetchAll();
+  return items;
 }
 
 // ============================================
@@ -388,9 +443,9 @@ async function GetAllMethod(bitacora, req, params, paramString, body, dbServer) 
       case 'MongoDB':
         files = await GetAllZTProductFiles();
         break;
-      case 'HANA':
-        // TODO: Implementar lógica para HANA
-        throw new Error('HANA no implementado aún para GetAll');
+      case 'CosmosDB':
+        files = await GetAllZTProductFilesCosmos();
+        break;
       default:
         throw new Error(`DBServer no soportado: ${dbServer}`);
     }
@@ -437,8 +492,9 @@ async function GetOneMethod(bitacora, req, params, fileid, dbServer) {
       case 'MongoDB':
         file = await GetOneZTProductFile(fileid);
         break;
-      case 'HANA':
-        throw new Error('HANA no implementado aún para GetOne');
+      case 'CosmosDB':
+        file = await GetOneZTProductFileCosmos(fileid);
+        break;
       default:
         throw new Error(`DBServer no soportado: ${dbServer}`);
     }
@@ -714,8 +770,9 @@ async function GetBySKUIDMethod(bitacora, req, params, skuid, dbServer) {
       case 'MongoDB':
         files = await GetZTProductFilesBySKUID(skuid);
         break;
-      case 'HANA':
-        throw new Error('HANA no implementado aún para GetBySKUID');
+      case 'CosmosDB':
+        files = await GetZTProductFilesBySKUIDCosmos(skuid);
+        break;
       default:
         throw new Error(`DBServer no soportado: ${dbServer}`);
     }
@@ -759,8 +816,9 @@ async function GetByIdPresentaOKMethod(bitacora, req, params, idPresentaOK, dbSe
       case 'MongoDB':
         files = await GetZTProductFilesByIdPresentaOK(idPresentaOK);
         break;
-      case 'HANA':
-        throw new Error('HANA no implementado aún para GetByIdPresentaOK');
+      case 'CosmosDB':
+        files = await GetZTProductFilesByIdPresentaOKCosmos(idPresentaOK);
+        break;
       default:
         throw new Error(`DBServer no soportado: ${dbServer}`);
     }

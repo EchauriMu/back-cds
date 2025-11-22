@@ -1,6 +1,7 @@
 // ============================================
 // IMPORTS
 // ============================================
+const { getCosmosDatabase } = require('../../config/connectToMongoDB.config');
 const ZTCATEGORIAS = require('../models/mongodb/ztcategorias');
 const { OK, FAIL, BITACORA, DATA, AddMSG } = require('../../middlewares/respPWA.handler');
 const { saveWithAudit } = require('../../helpers/audit-timestap');
@@ -8,6 +9,26 @@ const { saveWithAudit } = require('../../helpers/audit-timestap');
 // Util: payload desde CDS/Express
 function getPayload(req) {
   return req.data || req.req?.body || null;
+}
+
+// ============================================
+// UTIL: OBTENER CONTENEDOR DE COSMOS DB
+// ============================================
+async function getCosmosContainer(containerName, partitionKeyPath) {
+  const database = getCosmosDatabase();
+  if (!database) {
+    throw new Error('La conexión con Cosmos DB no está disponible.');
+  }
+  const { container } = await database.containers.createIfNotExists({
+    id: containerName,
+    partitionKey: { paths: [partitionKeyPath] }
+  });
+  return container;
+}
+
+// Helper específico para este servicio
+async function getCategoriasCosmosContainer() {
+  return getCosmosContainer('ZTCATEGORIAS', '/CATID');
 }
 
 // ============================================
@@ -94,6 +115,135 @@ async function ActivateZTCategoria(catid, user) {
 }
 
 // ============================================
+// OPERACIONES COSMOS DB
+// ============================================
+async function GetAllZTCategoriasCosmos() {
+  const container = await getCategoriasCosmosContainer();
+  const query = "SELECT * from c WHERE c.DELETED != true";
+  const { resources: items } = await container.items.query(query).fetchAll();
+  return items;
+}
+
+async function GetOneZTCategoriaCosmos(catid) {
+  if (!catid) throw new Error('Falta parámetro catid');
+  const container = await getCategoriasCosmosContainer();
+  const { resource: item } = await container.item(catid, catid).read();
+  if (!item) throw new Error('No se encontró la categoría');
+  return item;
+}
+
+async function AddOneZTCategoriaCosmos(payload, user) {
+  if (!payload) throw new Error('No se recibió payload');
+
+  // Inyectar el usuario logueado si no viene en el body
+  if (!payload.REGUSER && user) {
+    payload.REGUSER = user;
+  }
+
+  const required = ['CATID', 'Nombre', 'REGUSER'];
+  const missing = required.filter(k => !payload[k]);
+  if (missing.length) throw new Error(`Faltan campos obligatorios: ${missing.join(', ')}`);
+
+  const container = await getCategoriasCosmosContainer();
+
+  const { resource: existing } = await container.item(payload.CATID, payload.CATID).read().catch(() => ({}));
+  if (existing) throw new Error(`Ya existe una categoría con el CATID: ${payload.CATID}`);
+
+  const newItem = {
+    id: payload.CATID,
+    partitionKey: payload.CATID,
+    CATID: payload.CATID,
+    Nombre: payload.Nombre,
+    PadreCATID: payload.PadreCATID ?? null,
+    ACTIVED: payload.ACTIVED ?? true,
+    DELETED: payload.DELETED ?? false,
+    REGUSER: payload.REGUSER,
+    REGDATE: new Date().toISOString(),
+    HISTORY: [{
+      user: payload.REGUSER,
+      event: "CREATE",
+      date: new Date().toISOString(),
+      changes: { CATID: payload.CATID, Nombre: payload.Nombre, PadreCATID: payload.PadreCATID }
+    }]
+  };
+
+  const { resource: createdItem } = await container.items.create(newItem);
+  return createdItem;
+}
+
+async function UpdateOneZTCategoriaCosmos(catid, cambios, user) {
+  if (!catid) throw new Error('Falta parámetro catid');
+  if (!cambios || Object.keys(cambios).length === 0) throw new Error('No se enviaron datos para actualizar');
+
+  const container = await getCategoriasCosmosContainer();
+  const { resource: currentItem } = await container.item(catid, catid).read();
+  if (!currentItem) throw new Error(`No se encontró la categoría para actualizar con CATID: ${catid}`);
+
+  if (cambios.CATID && cambios.CATID !== catid) {
+    const { resource: existing } = await container.item(cambios.CATID, cambios.CATID).read().catch(() => ({}));
+    if (existing) throw new Error(`El nuevo CATID '${cambios.CATID}' ya está en uso por otra categoría.`);
+  }
+
+  const updatedItem = {
+    ...currentItem,
+    ...cambios,
+    id: currentItem.id, // El ID no debe cambiar en una actualización
+    partitionKey: currentItem.partitionKey, // La clave de partición no debe cambiar
+    MODUSER: user,
+    MODDATE: new Date().toISOString(),
+    HISTORY: [...(currentItem.HISTORY || []), { user, action: 'UPDATE', date: new Date().toISOString(), changes: cambios }]
+  };
+
+  const { resource: replacedItem } = await container.item(currentItem.id, currentItem.partitionKey).replace(updatedItem);
+  return replacedItem;
+}
+
+async function DeleteLogicZTCategoriaCosmos(catid, user) {
+  if (!catid) throw new Error('Falta parámetro catid');
+  const container = await getCategoriasCosmosContainer();
+  const { resource: currentItem } = await container.item(catid, catid).read();
+  if (!currentItem) throw new Error(`No se encontró la categoría para borrado lógico con CATID: ${catid}`);
+
+  const updatedItem = {
+    ...currentItem,
+    ACTIVED: false,
+    DELETED: true,
+    MODUSER: user,
+    MODDATE: new Date().toISOString(),
+    HISTORY: [...(currentItem.HISTORY || []), { user, action: 'DELETE_LOGIC', date: new Date().toISOString(), changes: { ACTIVED: false, DELETED: true } }]
+  };
+
+  const { resource: replacedItem } = await container.item(currentItem.id, currentItem.partitionKey).replace(updatedItem);
+  return replacedItem;
+}
+
+async function DeleteHardZTCategoriaCosmos(catid) {
+  if (!catid) throw new Error('Falta parámetro catid');
+  const container = await getCategoriasCosmosContainer();
+  await container.item(catid, catid).delete();
+  return { mensaje: 'Categoría eliminada permanentemente de Cosmos DB', CATID: catid };
+}
+
+async function ActivateZTCategoriaCosmos(catid, user) {
+  if (!catid) throw new Error('Falta parámetro catid');
+  const container = await getCategoriasCosmosContainer();
+  const { resource: currentItem } = await container.item(catid, catid).read();
+  if (!currentItem) throw new Error(`No se encontró la categoría para activar con CATID: ${catid}`);
+
+  const updatedItem = {
+    ...currentItem,
+    ACTIVED: true,
+    DELETED: false,
+    MODUSER: user,
+    MODDATE: new Date().toISOString(),
+    HISTORY: [...(currentItem.HISTORY || []), { user, action: 'ACTIVATE', date: new Date().toISOString(), changes: { ACTIVED: true, DELETED: false } }]
+  };
+
+  const { resource: replacedItem } = await container.item(currentItem.id, currentItem.partitionKey).replace(updatedItem);
+  return replacedItem;
+}
+
+// ============================================
 // MÉTODOS con BITÁCORA (patrón)
 // ============================================
 async function GetAllMethod(bitacora, req, params, paramString, body, dbServer) {
@@ -117,7 +267,7 @@ async function GetAllMethod(bitacora, req, params, paramString, body, dbServer) 
     let docs;
     switch (dbServer) {
       case 'MongoDB': docs = await GetAllZTCategorias(); break;
-      case 'HANA': throw new Error('HANA no implementado aún para GetAll');
+      case 'CosmosDB': docs = await GetAllZTCategoriasCosmos(); break;
       default: throw new Error(`DBServer no soportado: ${dbServer}`);
     }
 
@@ -156,7 +306,7 @@ async function GetOneMethod(bitacora, params, catid, dbServer) {
     let doc;
     switch (dbServer) {
       case 'MongoDB': doc = await GetOneZTCategoria(catid); break;
-      case 'HANA': throw new Error('HANA no implementado aún para GetOne');
+      case 'CosmosDB': doc = await GetOneZTCategoriaCosmos(catid); break;
       default: throw new Error(`DBServer no soportado: ${dbServer}`);
     }
 
@@ -194,7 +344,7 @@ async function AddOneMethod(bitacora, params, body, req, dbServer) {
     let result;
     switch (dbServer) {
       case 'MongoDB': result = await AddOneZTCategoria(getPayload(req), params.LoggedUser); break;
-      case 'HANA': throw new Error('HANA no implementado aún para AddOne');
+      case 'CosmosDB': result = await AddOneZTCategoriaCosmos(getPayload(req), params.LoggedUser); break;
       default: throw new Error(`DBServer no soportado: ${dbServer}`);
     }
 
@@ -245,7 +395,7 @@ async function UpdateOneMethod(bitacora, params, catid, req, user, dbServer) {
     let result;
     switch (dbServer) {
       case 'MongoDB': result = await UpdateOneZTCategoria(catid, getPayload(req), user); break;
-      case 'HANA': throw new Error('HANA no implementado aún para UpdateOne');
+      case 'CosmosDB': result = await UpdateOneZTCategoriaCosmos(catid, getPayload(req), user); break;
       default: throw new Error(`DBServer no soportado: ${dbServer}`);
     }
 
@@ -283,7 +433,7 @@ async function DeleteLogicMethod(bitacora, params, catid, user, dbServer) {
     let result;
     switch (dbServer) {
       case 'MongoDB': result = await DeleteLogicZTCategoria(catid, user); break;
-      case 'HANA': throw new Error('HANA no implementado aún para DeleteLogic');
+      case 'CosmosDB': result = await DeleteLogicZTCategoriaCosmos(catid, user); break;
       default: throw new Error(`DBServer no soportado: ${dbServer}`);
     }
 
@@ -327,7 +477,7 @@ async function DeleteHardMethod(bitacora, params, catid, dbServer) {
     let result;
     switch (dbServer) {
       case 'MongoDB': result = await DeleteHardZTCategoria(catid); break;
-      case 'HANA': throw new Error('HANA no implementado aún para DeleteHard');
+      case 'CosmosDB': result = await DeleteHardZTCategoriaCosmos(catid); break;
       default: throw new Error(`DBServer no soportado: ${dbServer}`);
     }
 
@@ -365,7 +515,7 @@ async function ActivateOneMethod(bitacora, params, catid, user, dbServer) {
     let result;
     switch (dbServer) {
       case 'MongoDB': result = await ActivateZTCategoria(catid, user); break;
-      case 'HANA': throw new Error('HANA no implementado aún para ActivateOne');
+      case 'CosmosDB': result = await ActivateZTCategoriaCosmos(catid, user); break;
       default: throw new Error(`DBServer no soportado: ${dbServer}`);
     }
 
@@ -544,5 +694,13 @@ module.exports = {
   UpdateOneZTCategoria,
   DeleteLogicZTCategoria,
   DeleteHardZTCategoria,
-  ActivateZTCategoria
+  ActivateZTCategoria,
+  // Cosmos DB Functions
+  GetAllZTCategoriasCosmos,
+  GetOneZTCategoriaCosmos,
+  AddOneZTCategoriaCosmos,
+  UpdateOneZTCategoriaCosmos,
+  DeleteLogicZTCategoriaCosmos,
+  DeleteHardZTCategoriaCosmos,
+  ActivateZTCategoriaCosmos
 };

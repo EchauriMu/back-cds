@@ -11,12 +11,11 @@ const { saveWithAudit } = require('../../helpers/audit-timestap');
 // UTIL: OBTENER PAYLOAD DESDE CDS/EXPRESS
 // ============================================
 function getPayload(req) {
-  console.log('🔍 [DEBUG] getPayload - Intentando extraer payload...');
   let payload = req.data || req.req?.body || null;
 
   // Limpiar metadatos de Cosmos DB del payload si existen.
   if (payload) {
-    const cosmosReadOnlyProps = ['_rid', '_self', '_etag', '_attachments', '_ts'];
+    const cosmosReadOnlyProps = ['_rid', '_self', '_etag', '_attachments', '_ts']; // 'partitionKey' NO se debe eliminar.
     const cleanedPayload = { ...payload };
     cosmosReadOnlyProps.forEach(prop => delete cleanedPayload[prop]);
     payload = cleanedPayload;
@@ -181,16 +180,17 @@ async function AddOneZTProductCosmos(payload, user) {
 }
 
 async function UpdateOneZTProductCosmos(req, skuid, user) {
-  console.log(`\n[DEBUG] UpdateOneZTProductCosmos - INICIO. SKUID: ${skuid}, User: ${user}`);
   const cambios = getPayload(req);
 
   if (!skuid) throw new Error('Falta parámetro SKUID');
   if (!cambios || Object.keys(cambios).length === 0) throw new Error('No se enviaron datos para actualizar');
 
+  // 1. OBTENER CONTENEDOR (YA SABEMOS QUE ESTÁ PARTICIONADO POR /SKUID)
+  // El getCosmosContainer original es suficiente aquí.
   const container = await getCosmosContainer();
 
-  // 1. BUSCAR EL ITEM CON UNA CONSULTA (QUERY)
-  // Esta es la forma más robusta de encontrar un item sin conocer su estado (si tiene o no partitionKey)
+  // 2. BUSCAR EL ITEM (QUERY)
+  // Usar query para obtener la versión actual del item y su clave de partición.
   const querySpec = {
     query: "SELECT * FROM c WHERE c.id = @skuid",
     parameters: [{ name: "@skuid", value: skuid }]
@@ -202,14 +202,21 @@ async function UpdateOneZTProductCosmos(req, skuid, user) {
   }
   const currentItem = items[0];
 
-  // 2. IDENTIFICAR LA CLAVE DE PARTICIÓN ACTUAL Y LA NUEVA
-  // La clave actual es la que tiene el documento en la BD (puede ser undefined para datos viejos)
-  const currentPartitionKey = currentItem.partitionKey;
-  // La nueva clave (la correcta) siempre debe ser el SKUID.
-  const newPartitionKey = currentItem.SKUID;
+  // 3. DETERMINAR LA CLAVE DE PARTICIÓN A USAR EN LA OPERACIÓN DE REEMPLAZO.
+  // ESTA ES LA CLAVE MÁS IMPORTANTE.
+  // Usamos el campo especial de Cosmos DB (/_partitionKey) o la propiedad "partitionKey"
+  // si existe, pero el SDK es inteligente. Para el reemplazo (paso 5), SÓLO necesitamos
+  // el valor actual que tiene el documento en la BD.
+  // Si el documento fue creado con tu lógica, tendrá currentItem.partitionKey.
+  // Si es un documento viejo/mal creado, *podría no tener* la propiedad partitionKey o tenerla mal.
+  // **USAMOS EL VALOR QUE DEBIÓ USARSE EN LA CREACIÓN:**
+  // Si el documento *existe* y el contenedor está particionado por /SKUID,
+  // la clave de partición *siempre* es el SKUID.
+  // Nota: Si es un documento "viejo" sin partición, Cosmos DB usa 'undefined' como clave.
+  // La clave a usar en el `.item()` es el valor de la propiedad que particiona.
+  const currentPartitionKey = currentItem.SKUID; // Usamos SKUID como valor de la partición actual.
 
-  console.log(`[DEBUG] UpdateOneZTProductCosmos - PartitionKey actual: ${currentPartitionKey}, PartitionKey nueva: ${newPartitionKey}`);
-
+  // Parseo de CATEGORIAS (Correcto)
   if (cambios.CATEGORIAS && typeof cambios.CATEGORIAS === 'string') {
     try {
       cambios.CATEGORIAS = JSON.parse(cambios.CATEGORIAS);
@@ -218,18 +225,20 @@ async function UpdateOneZTProductCosmos(req, skuid, user) {
     }
   }
 
-  // 3. MEZCLAR CAMBIOS Y ASEGURAR DATOS
+  // 4. MEZCLAR CAMBIOS Y ASEGURAR DATOS
   const updatedItem = {
     ...currentItem,
     ...cambios,
+    // **Aseguramos que el ID y el partitionKey se mantengan en el documento a reemplazar**
     id: currentItem.id,
-    SKUID: currentItem.SKUID,
-    partitionKey: newPartitionKey, // Aseguramos que el campo partitionKey se guarde con el valor correcto.
+    SKUID: currentItem.SKUID, // El campo SKUID no cambia
+    partitionKey: currentItem.SKUID, // Aseguramos que el documento FINAL tenga la clave correcta.
   };
 
   updatedItem.MODUSER = user;
   updatedItem.MODDATE = new Date().toISOString();
 
+  // Lógica de historial (Correcto)
   updatedItem.HISTORY = updatedItem.HISTORY || [];
   updatedItem.HISTORY.push({
     event: 'UPDATE',
@@ -238,20 +247,94 @@ async function UpdateOneZTProductCosmos(req, skuid, user) {
     changes: cambios
   });
 
-  // 4. REEMPLAZAR EL ITEM USANDO SU ID Y SU CLAVE DE PARTICIÓN *ACTUAL*
-  console.log(`[DEBUG] Reemplazando item con ID '${currentItem.id}' en su partición actual:`, currentPartitionKey);
+  // 5. REEMPLAZAR EL ITEM USANDO SU ID Y SU CLAVE DE PARTICIÓN ACTUAL.
+  // Para que la operación de reemplazo funcione, DEBES usar la clave de partición con la
+  // que el documento *existe actualmente* en la base de datos (que es SKUID si lo creaste bien).
+  const { resource: replacedItem } = await container
+    // El primer argumento es el ID. El segundo es la clave de partición *actual* del item.
+    .item(currentItem.id, currentPartitionKey)
+    .replace(updatedItem);
+
+  return replacedItem;
+}
+
+async function DeleteLogicZTProductCosmos(skuid, user) {
+  if (!skuid) throw new Error('Falta parámetro SKUID');
+
+  const container = await getCosmosContainer();
+
+  // Buscar el item activo
+  const querySpec = {
+    query: "SELECT * FROM c WHERE c.id = @skuid AND c.DELETED = false",
+    parameters: [{ name: "@skuid", value: skuid }]
+  };
+  const { resources: items } = await container.items.query(querySpec).fetchAll();
+
+  if (!items || items.length === 0) {
+    throw new Error(`No se encontró el producto activo para borrado lógico con SKUID: ${skuid}`);
+  }
+  const currentItem = items[0];
+  const currentPartitionKey = currentItem.SKUID;
+
+  // Preparar los cambios para el borrado lógico
+  const updatedItem = {
+    ...currentItem,
+    ACTIVED: false,
+    DELETED: true,
+    MODUSER: user,
+    MODDATE: new Date().toISOString(),
+  };
+
+  // Añadir al historial
+  updatedItem.HISTORY = updatedItem.HISTORY || [];
+  updatedItem.HISTORY.push({
+    event: 'DELETE_LOGIC',
+    user: user,
+    date: new Date().toISOString(),
+    changes: { ACTIVED: false, DELETED: true }
+  });
+
+  // Reemplazar el item
   const { resource: replacedItem } = await container
     .item(currentItem.id, currentPartitionKey)
     .replace(updatedItem);
 
-  console.log('[DEBUG] UpdateOneZTProductCosmos - Reemplazo exitoso.');
   return replacedItem;
 }
 
-// NOTA: Las funciones Delete y Activate para Cosmos DB seguirían un patrón similar a Update,
-// modificando los campos ACTIVED/DELETED y añadiendo al historial.
-// Por simplicidad, se omite su implementación aquí, pero se pueden añadir siguiendo el ejemplo de UpdateOneZTProductCosmos.
+async function DeleteHardZTProductCosmos(skuid) {
+  if (!skuid) throw new Error('Falta parámetro SKUID');
+  const container = await getCosmosContainer();
+  // Para borrar, necesitamos el id y la clave de partición, que en nuestro caso son ambos el SKUID.
+  const { resource: deletedItem } = await container.item(skuid, skuid).delete();
+  if (!deletedItem) throw new Error('No se encontró el producto para eliminar permanentemente');
+  return { mensaje: 'Producto eliminado permanentemente de Cosmos DB', SKUID: skuid };
+}
 
+async function ActivateOneZTProductCosmos(skuid, user) {
+  if (!skuid) throw new Error('Falta parámetro SKUID');
+  const container = await getCosmosContainer();
+
+  // Buscar el item
+  const { resource: currentItem } = await container.item(skuid, skuid).read();
+  if (!currentItem) throw new Error(`No se encontró el producto para activar con SKUID: ${skuid}`);
+
+  // Preparar los cambios para la activación
+  const updatedItem = {
+    ...currentItem,
+    ACTIVED: true,
+    DELETED: false,
+    MODUSER: user,
+    MODDATE: new Date().toISOString(),
+    HISTORY: [...(currentItem.HISTORY || []), { event: 'ACTIVATE', user, date: new Date().toISOString(), changes: { ACTIVED: true, DELETED: false } }]
+  };
+
+  // Reemplazar el item
+  const { resource: replacedItem } = await container
+    .item(currentItem.id, currentItem.SKUID)
+    .replace(updatedItem);
+  return replacedItem;
+}
 //----------------------------------------
 //FIC: CRUD Products Service with Bitacora
 //----------------------------------------
@@ -262,16 +345,13 @@ async function crudZTProducts(req) {
   let data = DATA();
   
   try {
-    console.log('\n[DEBUG] crudZTProducts - INICIO');
     // 1. EXTRAER Y SERIALIZAR PARÁMETROS
     const params = req.req?.query || {};
     const body = req.req?.body;
     const paramString = params ? new URLSearchParams(params).toString().trim() : '';
     const { ProcessType, LoggedUser, DBServer, skuid } = params;
     const dbServer = DBServer || 'MongoDB'; // Default explícito
-    
     // 2. VALIDAR PARÁMETROS OBLIGATORIOS
-    console.log(`[DEBUG] crudZTProducts - ProcessType: ${ProcessType}, DBServer: ${dbServer}, SKUID: ${skuid}`);
     if (!ProcessType) {
       data.process = 'Validación de parámetros obligatorios';
       data.messageUSR = 'Falta parámetro obligatorio: ProcessType';
@@ -326,16 +406,13 @@ async function crudZTProducts(req) {
         break;
         
       case 'AddOne':
-        console.log('[DEBUG] crudZTProducts - Enrutando a AddProductMethod');
         bitacora = await AddProductMethod(bitacora, params, paramString, body, req, dbServer);
         if (!bitacora.success) {
           bitacora.finalRes = true;
           return FAIL(bitacora);
         }
         break;
-
       case 'UpdateOne':
-        console.log('[DEBUG] crudZTProducts - Enrutando a UpdateProductMethod');
         if (!skuid) {
           data.process = 'Validación de parámetros';
           data.messageUSR = 'Falta parámetro obligatorio: skuid';
@@ -360,12 +437,18 @@ async function crudZTProducts(req) {
           bitacora.finalRes = true;
           return FAIL(bitacora);
         }
-        const deleteResult = await DeleteLogicZTProduct(skuid, LoggedUser);
-        bitacora = AddMSG(bitacora, DATA('Borrado Lógico', `Producto ${skuid} desactivado.`, deleteResult), 'OK', 200, true);
+        bitacora = await DeleteProductMethod(
+          bitacora,
+          { ...params, paramString, ProcessType: 'DeleteLogic' }, // Forzar ProcessType
+          skuid,
+          LoggedUser,
+          dbServer
+        );
         if (!bitacora.success) {
           bitacora.finalRes = true;
           return FAIL(bitacora);
         }
+
         break;
 
       case 'DeleteHard':
@@ -377,7 +460,13 @@ async function crudZTProducts(req) {
           bitacora.finalRes = true;
           return FAIL(bitacora);
         }
-        bitacora = await DeleteProductMethod(bitacora, { ...params, paramString }, skuid, LoggedUser, dbServer);
+        bitacora = await DeleteProductMethod(
+          bitacora,
+          { ...params, paramString, ProcessType: 'DeleteHard' }, // Forzar ProcessType
+          skuid,
+          LoggedUser,
+          dbServer
+        );
         if (!bitacora.success) {
           bitacora.finalRes = true;
           return FAIL(bitacora);
@@ -393,12 +482,19 @@ async function crudZTProducts(req) {
           bitacora.finalRes = true;
           return FAIL(bitacora);
         }
-        const activateResult = await ActivateOneZTProduct(skuid, LoggedUser);
-        bitacora = AddMSG(bitacora, DATA('Activación', `Producto ${skuid} activado.`, activateResult), 'OK', 200, true);
+        bitacora = await UpdateProductMethod(
+          bitacora,
+          { ...params, paramString, operation: 'activate' }, // Forzar operación de activación
+          body,
+          req,
+          LoggedUser,
+          dbServer
+        );
         if (!bitacora.success) {
           bitacora.finalRes = true;
           return FAIL(bitacora);
         }
+
         break;
         
       default:
@@ -623,7 +719,6 @@ async function AddProductMethod(bitacora, params, paramString, body, req, dbServ
 }
 
 async function UpdateProductMethod(bitacora, params, paramString, body, req, user, dbServer) {
-    console.log('\n[DEBUG] UpdateProductMethod - INICIO');
     let data = DATA();
     
     // Configurar contexto de data
@@ -649,29 +744,26 @@ async function UpdateProductMethod(bitacora, params, paramString, body, req, use
     try {
         let result;
         const skuid = params.skuid || params.SKUID;
-        console.log(`[DEBUG] UpdateProductMethod - SKUID: ${skuid}, DBServer: ${dbServer}`);
         const isActivate = params.operation === 'activate' || params.type === 'activate';
         
         switch (dbServer) {
             case 'MongoDB':
                 if (isActivate) {
-                    // Usar función de activación
-                    result = await ActivateOneZTProduct(skuid);
+                    result = await ActivateOneZTProduct(skuid, user);
                 } else {
-                    // Usar función de actualización
                     result = await UpdateOneZTProduct(skuid, getPayload(req), user);
                 }
                 break;
             case 'CosmosDB':
-                console.log('[DEBUG] UpdateProductMethod - Llamando a UpdateOneZTProductCosmos');
-                // Para Cosmos, la activación es una actualización. Se puede añadir lógica para diferenciar si es necesario.
-                result = await UpdateOneZTProductCosmos(req, skuid, user);
+                if (isActivate) {
+                    result = await ActivateOneZTProductCosmos(skuid, user);
+                } else {
+                    result = await UpdateOneZTProductCosmos(req, skuid, user);
+                }
                 break;
             default:
                 throw new Error(`DBServer no soportado: ${dbServer}`);
         }
-        
-        console.log('[DEBUG] UpdateProductMethod - Resultado de la operación de BD:', JSON.stringify(result, null, 2));
         data.dataRes = result;
         data.messageUSR = isActivate ? 'Producto activado exitosamente' : 'Producto actualizado exitosamente';
         data.messageDEV = isActivate ? 'ActivateOneZTProduct ejecutado sin errores' : 'UpdateOneZTProduct ejecutado sin errores';
@@ -681,7 +773,6 @@ async function UpdateProductMethod(bitacora, params, paramString, body, req, use
         return bitacora;
         
     } catch (error) {
-        console.error('[ERROR] UpdateProductMethod - CATCH:', error);
         // MANEJO ESPECÍFICO DE ERRORES
         if (error.message.includes('No se encontró') || error.message.includes('no encontrado')) {
             data.messageUSR = 'Error al actualizar el producto - producto no encontrado';
@@ -726,27 +817,30 @@ async function DeleteProductMethod(bitacora, params, skuid, user, dbServer) {
     
     try {
         let result;
-        const isHardDelete = params.ProcessType === 'DeleteHard';
-        
+        const processType = params.ProcessType;
+
         switch (dbServer) {
             case 'MongoDB':
-                if (isHardDelete) {
-                    // Usar función de eliminación física
+                if (processType === 'DeleteHard') {
                     result = await DeleteHardZTProduct(skuid);
-                } else {
-                    // Usar función de eliminación lógica
+                } else { // DeleteLogic
                     result = await DeleteLogicZTProduct(skuid, user);
                 }
                 break;
-            case 'HANA':
-                throw new Error('HANA no implementado aún para Delete');
+            case 'CosmosDB':
+                if (processType === 'DeleteHard') {
+                    result = await DeleteHardZTProductCosmos(skuid);
+                } else { // DeleteLogic
+                    result = await DeleteLogicZTProductCosmos(skuid, user);
+                }
+                break;
             default:
                 throw new Error(`DBServer no soportado: ${dbServer}`);
         }
         
         data.dataRes = result;
-        data.messageUSR = isHardDelete ? 'Producto eliminado físicamente' : 'Producto eliminado lógicamente';
-        data.messageDEV = isHardDelete ? 'DeleteHardZTProduct ejecutado sin errores' : 'DeleteLogicZTProduct ejecutado sin errores';
+        data.messageUSR = processType === 'DeleteHard' ? 'Producto eliminado físicamente' : 'Producto eliminado lógicamente';
+        data.messageDEV = `${processType} ejecutado sin errores para ${dbServer}`;
         bitacora = AddMSG(bitacora, data, 'OK', 200, true);
         bitacora.success = true;
         
@@ -777,5 +871,9 @@ module.exports = {
     UpdateOneZTProduct,
     DeleteLogicZTProduct,
     DeleteHardZTProduct,
-    ActivateOneZTProduct
+    ActivateOneZTProduct,
+    // Cosmos DB Functions
+    DeleteLogicZTProductCosmos,
+    DeleteHardZTProductCosmos,
+    ActivateOneZTProductCosmos
 };

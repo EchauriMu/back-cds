@@ -20,12 +20,12 @@ function getPayload(req) {
 // ============================================
 // UTIL: OBTENER CONTENEDOR DE COSMOS DB
 // ============================================
-async function getCosmosContainer(containerName) {
+async function getCosmosContainer(containerName, partitionKeyPath) {
   const database = getCosmosDatabase();
   if (!database) {
     throw new Error('La conexión con Cosmos DB no está disponible.');
   }
-  const { container } = await database.containers.createIfNotExists({ id: containerName });
+  const { container } = await database.containers.createIfNotExists({ id: containerName, partitionKey: { paths: [partitionKeyPath] } });
   return container;
 }
 
@@ -102,7 +102,7 @@ async function addProductWithPresentations(req) {
           break;
         }
         case 'CosmosDB': {
-          const container = await getCosmosContainer('ZTPRODUCTS');
+          const container = await getCosmosContainer('ZTPRODUCTS', '/SKUID');
           // FORMA CORRECTA DE VERIFICAR SI EXISTE: Usar una consulta.
           // Esto funciona sin importar si el item tiene o no partitionKey.
           const querySpec = {
@@ -181,21 +181,32 @@ async function addProductWithPresentations(req) {
               break;
             }
             case 'CosmosDB': {
-              const container = await getCosmosContainer('ZTPRODUCTS_PRESENTACIONES');
-              const { resource: existing } = await container.item(pres.IdPresentaOK, createdProduct.id).read().catch(() => ({}));
-              if (existing) throw new Error(`Ya existe una presentación con el ID: ${pres.IdPresentaOK}`);
+              const container = await getCosmosContainer('ZTPRODUCTS_PRESENTACIONES', '/IDPRESENTAOK');
+              // Para leer un item, se necesita su ID y su clave de partición.
+              // Como la clave de partición es el mismo IDPRESENTAOK, la usamos en ambos argumentos.
+              const { resource: existing } = await container.item(pres.IdPresentaOK, pres.IdPresentaOK).read().catch(() => ({}));
+              if (existing) throw new Error(`Ya existe una presentación con el ID: ${pres.IdPresentaOK}.`);
 
               let propiedades = {};
               if (typeof pres.PropiedadesExtras === 'string' && pres.PropiedadesExtras.trim() !== '') {
+                try {
                   propiedades = JSON.parse(pres.PropiedadesExtras);
-              } else if (typeof pres.PropiedadesExtras === 'object') {
-                  propiedades = pres.PropiedadesExtras;
+                } catch (e) {
+                  propiedades = {}; // Si no es un JSON válido, se queda como objeto vacío
+                }
+              } else if (typeof pres.PropiedadesExtras === 'object' && pres.PropiedadesExtras !== null) {
+                propiedades = pres.PropiedadesExtras;
               }
+
+              // Excluir 'files' del objeto que se va a guardar en la BD
+              const { files: _files, ...presToSave } = pres;
 
               const newItem = {
                 id: pres.IdPresentaOK,
+                partitionKey: pres.IdPresentaOK, // ¡IMPORTANTE! Clave de partición es IDPRESENTAOK
                 SKUID: createdProduct.id,
-                ...pres,
+                IDPRESENTAOK: pres.IdPresentaOK, // Aseguramos que el campo exista en mayúsculas
+                ...presToSave,
                 PropiedadesExtras: propiedades,
                 ACTIVED: pres.ACTIVED ?? true,
                 DELETED: pres.DELETED ?? false,
@@ -205,7 +216,7 @@ async function addProductWithPresentations(req) {
                   user: LoggedUser,
                   action: "CREATE",
                   date: new Date().toISOString(),
-                  changes: pres
+                  changes: presToSave // Guardar la presentación sin los archivos
                 }]
               };
               const { resource: createdItem } = await container.items.create(newItem);
@@ -221,6 +232,7 @@ async function addProductWithPresentations(req) {
           // 4.1. SUBIR ARCHIVOS DE LA PRESENTACIÓN (SI EXISTEN)
           if (pres.files && pres.files.length > 0) {
             for (const file of pres.files) {
+              const { fileBase64, originalname, mimetype, ...restOfFile } = file;
               // 1. Preparar el objeto 'file' para el helper
               const cleanBase64 = fileBase64.replace(/^data:([A-Za-z-+\/]+);base64,/, '').replace(/\r?\n|\r/g, '');
               const fileBuffer = Buffer.from(cleanBase64, 'base64');
@@ -235,9 +247,7 @@ async function addProductWithPresentations(req) {
               const bodyForHelper = {
                 SKUID: createdProduct.SKUID || createdProduct.id,
                 IdPresentaOK: newPresentation.IdPresentaOK || newPresentation.id, // Asociar archivo a la presentación
-                FILETYPE: file.FILETYPE,
-                PRINCIPAL: file.PRINCIPAL,
-                INFOAD: file.INFOAD,
+                ...restOfFile
               };
 
               // 3. Llamar al helper con los 3 argumentos correctos
@@ -263,13 +273,13 @@ async function addProductWithPresentations(req) {
               }
               break;
             case 'CosmosDB':
-              const productContainer = await getCosmosContainer('ZTPRODUCTS');
-              await productContainer.item(createdProduct.id, createdProduct.id).delete().catch(() => {});
+              const productContainer = await getCosmosContainer('ZTPRODUCTS', '/SKUID');
+              await productContainer.item(createdProduct.id, createdProduct.SKUID).delete().catch(() => {});
 
-              const presContainer = await getCosmosContainer('ZTPRODUCTS_PRESENTACIONES');
+              const presContainer = await getCosmosContainer('ZTPRODUCTS_PRESENTACIONES', '/IDPRESENTAOK');
               const presentaOKsToDeleteCosmos = createdPresentations.map(p => p.id);
-              for (const presId of presentaOKsToDeleteCosmos) {
-                await presContainer.item(presId, createdProduct.id).delete().catch(() => {});
+              for (const presToDelete of createdPresentations) {
+                await presContainer.item(presToDelete.id, presToDelete.IDPRESENTAOK).delete().catch(() => {}); // El segundo argumento (partitionKey) debe ser el valor del campo IDPRESENTAOK
               }
               break;
           }

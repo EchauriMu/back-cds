@@ -1,7 +1,9 @@
 // ============================================
 // IMPORTS
 // ============================================
+const { getCosmosDatabase } = require('../../config/connectToMongoDB.config');
 const { ZTProducts_Presentaciones } = require('../models/mongodb/ztproducts_presentaciones');
+const { ZTProduct } = require('../models/mongodb/ztproducts'); // FIC: Necesario para validación de SKUID
 const { ZTProduct_FILES } = require('../models/mongodb/ztproducts_files');
 const { handleUploadZTProductFileCDS } = require('../../helpers/azureUpload.helper');
 const { OK, FAIL, BITACORA, DATA, AddMSG } = require('../../middlewares/respPWA.handler');
@@ -13,6 +15,26 @@ const { saveWithAudit } = require('../../helpers/audit-timestap');
 function getPayload(req) {
   // Si la acción no tiene parámetros definidos, CAP pone todo el body en req.data
   return req.data || req.req?.body || null;
+}
+
+// ============================================
+// UTIL: OBTENER CONTENEDOR DE COSMOS DB
+// ============================================
+async function getCosmosContainer(containerName, partitionKeyPath) {
+  const database = getCosmosDatabase();
+  if (!database) {
+    throw new Error('La conexión con Cosmos DB no está disponible.');
+  }
+  const { container } = await database.containers.createIfNotExists({ 
+    id: containerName, 
+    partitionKey: { paths: [partitionKeyPath] } 
+  });
+  return container;
+}
+
+// Helper específico para este servicio
+async function getPresentacionesCosmosContainer() {
+  return getCosmosContainer('ZTPRODUCTS_PRESENTACIONES', '/IDPRESENTAOK');
 }
 
 // ============================================
@@ -236,6 +258,284 @@ async function GetZTProductsPresentacionesBySKUID(skuid) {
 }
 
 // ============================================
+// CRUD BÁSICO (COSMOS DB SDK)
+// ============================================
+async function GetAllZTProductsPresentacionesCosmos() {
+  console.log("🐛 [DEBUG] -> Iniciando GetAllZTProductsPresentacionesCosmos...");
+  const container = await getPresentacionesCosmosContainer();
+  const query = "SELECT * from c WHERE c.DELETED != true";
+  console.log(`🐛 [DEBUG] -> Ejecutando query: ${query}`);
+  const { resources: items } = await container.items.query(query).fetchAll();
+  console.log(`🐛 [DEBUG] -> Query completada. Se encontraron ${items.length} presentaciones.`);
+  return items;
+}
+
+async function GetOneZTProductsPresentacionCosmos(idpresentaok) {
+  console.log(`🐛 [DEBUG] -> Iniciando GetOneZTProductsPresentacionCosmos con idpresentaok: ${idpresentaok}`);
+  if (!idpresentaok) throw new Error('Falta parámetro IdPresentaOK');
+  const container = await getPresentacionesCosmosContainer();
+  // Para leer un item, se necesita su ID y su clave de partición.
+  // En este contenedor, ambos son `idpresentaok`.
+  console.log(`🐛 [DEBUG] -> Leyendo item con ID '${idpresentaok}' y PartitionKey '${idpresentaok}'`);
+  const { resource: item } = await container.item(idpresentaok, idpresentaok).read();
+  if (!item) {
+    console.error(`\x1b[31m[ERROR]\x1b[0m -> No se encontró la presentación con id: ${idpresentaok}`);
+    throw new Error('No se encontró la presentación');
+  }
+  console.log("🐛 [DEBUG] -> Presentación encontrada:", JSON.stringify(item, null, 2));
+  return item;
+}
+
+async function AddOneZTProductsPresentacionCosmos(payload, user) {
+  console.log("🐛 [DEBUG] -> Iniciando AddOneZTProductsPresentacionCosmos...");
+  console.log("   -> Payload recibido:", JSON.stringify(payload, null, 2));
+  console.log(`   -> Usuario: ${user}`);
+
+  if (!payload) throw new Error('No se recibió payload. Verifica Content-Type: application/json');
+
+  const { files, ...presentationPayload } = payload;
+  const { IdPresentaOK, SKUID, NOMBREPRESENTACION, Descripcion } = presentationPayload;
+
+  const required = ['IdPresentaOK', 'SKUID', 'NOMBREPRESENTACION', 'Descripcion'];
+  console.log("🐛 [DEBUG] -> Validando campos obligatorios:", required);
+  const missing = required.filter((k) => !presentationPayload[k]);
+  if (missing.length) throw new Error(`Faltan campos obligatorios en la presentación: ${missing.join(', ')}`);
+  console.log("🐛 [DEBUG] -> Validación de campos obligatorios: OK");
+
+  const container = await getPresentacionesCosmosContainer();
+
+  // Verificar si la presentación ya existe
+  console.log(`🐛 [DEBUG] -> Verificando si ya existe presentación con IdPresentaOK: ${IdPresentaOK}`);
+  const { resource: existing } = await container.item(IdPresentaOK, IdPresentaOK).read().catch(() => ({}));
+  if (existing) throw new Error(`Ya existe una presentación con el IdPresentaOK: ${IdPresentaOK}`);
+  console.log("🐛 [DEBUG] -> Verificación de duplicados: OK, no existe.");
+
+  // Verificar si el producto padre (SKUID) existe
+  console.log(`🐛 [DEBUG] -> Verificando si existe producto padre con SKUID: ${SKUID}`);
+  const productContainer = await getCosmosContainer('ZTPRODUCTS', '/SKUID');
+  // Usamos una consulta para verificar la existencia del producto padre.
+  const productQuery = { query: "SELECT c.id FROM c WHERE c.id = @skuid", parameters: [{ name: "@skuid", value: SKUID }] };
+  const { resources: products } = await productContainer.items.query(productQuery).fetchAll();
+  if (products.length === 0) throw new Error(`El producto padre con SKUID '${SKUID}' no existe.`);
+  console.log("🐛 [DEBUG] -> Verificación de producto padre: OK, sí existe.");
+
+  let createdPresentation;
+  const createdFilesInfo = [];
+
+  try {
+    // 1. CREAR LA PRESENTACIÓN
+    let propiedades = {};
+    if (typeof presentationPayload.PropiedadesExtras === 'string' && presentationPayload.PropiedadesExtras.trim() !== '') {
+      try {
+        propiedades = JSON.parse(presentationPayload.PropiedadesExtras);
+      } catch (jsonError) {
+        throw new Error(`El formato de PropiedadesExtras no es un JSON válido.`);
+      }
+    } else if (typeof presentationPayload.PropiedadesExtras === 'object' && presentationPayload.PropiedadesExtras !== null) {
+        propiedades = presentationPayload.PropiedadesExtras;
+    }
+
+    // Excluir 'files' del objeto que se va a guardar en la BD
+    const { files: _files, ...payloadToSave } = presentationPayload;
+
+    const newItem = {
+      id: IdPresentaOK,
+      partitionKey: IdPresentaOK, // Clave de partición
+      IdPresentaOK: IdPresentaOK, // Campo en mayúsculas para consistencia
+      ...presentationPayload,
+      PropiedadesExtras: propiedades,
+      ACTIVED: presentationPayload.ACTIVED ?? true,
+      DELETED: presentationPayload.DELETED ?? false,
+      REGUSER: user,
+      REGDATE: new Date().toISOString(),
+      HISTORY: [{
+        user: user,
+        event: "CREATE",
+        date: new Date().toISOString(),
+        changes: payloadToSave // Guardar el payload sin los archivos
+      }]
+    };
+
+    console.log("🐛 [DEBUG] -> Objeto a crear en Cosmos DB:", JSON.stringify(newItem, null, 2));
+    const { resource: createdItem } = await container.items.create(newItem);
+    createdPresentation = createdItem;
+    console.log("🐛 [DEBUG] -> Presentación creada exitosamente en Cosmos DB. ID:", createdItem.id);
+
+    // 2. SUBIR ARCHIVOS (SI EXISTEN)
+    if (files && files.length > 0) {
+      console.log(`🐛 [DEBUG] -> Se encontraron ${files.length} archivos para subir.`);
+      for (const [index, file] of files.entries()) {
+        console.log(`   -> Procesando archivo #${index + 1}...`);
+        const { fileBase64, originalname, mimetype, ...restOfFile } = file;
+        const cleanBase64 = fileBase64.replace(/^data:([A-Za-z-+\/]+);base64,/, '').replace(/\r?\n|\r/g, '');
+        const fileBuffer = Buffer.from(cleanBase64, 'base64');
+        const fileForHelper = { buffer: fileBuffer, originalname, mimetype };
+        const bodyForHelper = { SKUID: createdPresentation.SKUID, IdPresentaOK: createdPresentation.id, ...restOfFile };
+
+        const uploadResult = await handleUploadZTProductFileCDS(fileForHelper, bodyForHelper, user, 'CosmosDB');
+        if (uploadResult.error || uploadResult.status >= 400) {
+          throw new Error(uploadResult.message || uploadResult.data?.error || 'Error al subir archivo a Azure.');
+        }
+        createdFilesInfo.push(uploadResult.data);
+        console.log(`   -> Archivo #${index + 1} subido exitosamente.`);
+      }
+    } else {
+      console.log("🐛 [DEBUG] -> No se encontraron archivos en el payload.");
+    }
+
+    // 3. RESPUESTA EXITOSA
+    const finalResponse = { presentation: createdPresentation, files: createdFilesInfo };
+    console.log("🐛 [DEBUG] -> Operación completada. Retornando:", JSON.stringify(finalResponse, null, 2));
+    return finalResponse;
+
+  } catch (error) {
+    console.error(`\x1b[31m[ERROR]\x1b[0m -> Error en AddOneZTProductsPresentacionCosmos: ${error.message}`);
+    // -- INICIO DE ROLLBACK --
+    if (createdPresentation) {
+      console.log(`\x1b[33m[ROLLBACK]\x1b[0m -> Intentando eliminar la presentación creada con id: ${createdPresentation.id}`);
+      await container.item(createdPresentation.id, createdPresentation.id).delete().catch(() => {});
+      console.log(`\x1b[33m[ROLLBACK]\x1b[0m -> Presentación eliminada.`);
+    }
+    // TODO: Rollback de archivos subidos a Azure.
+    // -- FIN DE ROLLBACK --
+    throw error; // Re-lanzar el error original
+  }
+}
+
+async function UpdateOneZTProductsPresentacionCosmos(idpresentaok, cambios, user) {
+  console.log(`🐛 [DEBUG] -> Iniciando UpdateOneZTProductsPresentacionCosmos con idpresentaok: ${idpresentaok}`);
+  console.log("   -> Cambios recibidos:", JSON.stringify(cambios, null, 2));
+  console.log(`   -> Usuario: ${user}`);
+
+  if (!idpresentaok) throw new Error('Falta parámetro IdPresentaOK');
+  if (!cambios || Object.keys(cambios).length === 0) throw new Error('No se enviaron datos para actualizar');
+
+  const container = await getPresentacionesCosmosContainer();
+  console.log(`🐛 [DEBUG] -> Buscando item actual con id: ${idpresentaok}`);
+  const { resource: currentItem } = await container.item(idpresentaok, idpresentaok).read();
+  if (!currentItem) throw new Error(`No se encontró la presentación para actualizar con IdPresentaOK: ${idpresentaok}`);
+
+  const { files, ...presentationChanges } = cambios;
+
+  // Parsear PropiedadesExtras
+  if (typeof presentationChanges.PropiedadesExtras === 'string') {
+    try {
+      presentationChanges.PropiedadesExtras = JSON.parse(presentationChanges.PropiedadesExtras);
+    } catch (e) {
+      throw new Error('El campo PropiedadesExtras no es un JSON válido.');
+    }
+  }
+
+  const updatedItem = {
+    ...currentItem,
+    ...presentationChanges,
+    id: currentItem.id, // Asegurar que el id no cambie
+    partitionKey: currentItem.partitionKey, // Asegurar que la partitionKey no cambie
+    MODUSER: user, // Este campo es importante para la auditoría
+    MODDATE: new Date().toISOString(),
+    HISTORY: [...(currentItem.HISTORY || []), { user, action: 'UPDATE', date: new Date().toISOString(), changes: presentationChanges }]
+  };
+
+  console.log("🐛 [DEBUG] -> Objeto a reemplazar en Cosmos DB:", JSON.stringify(updatedItem, null, 2));
+  const { resource: replacedItem } = await container.item(currentItem.id, currentItem.partitionKey).replace(updatedItem);
+  console.log("🐛 [DEBUG] -> Item reemplazado exitosamente.");
+
+  // Lógica para manejar archivos (similar a la versión de Mongo)
+  const processedFiles = [];
+  if (files && files.length > 0) {
+      console.log(`🐛 [DEBUG] -> Se encontraron ${files.length} archivos para procesar en la actualización.`);
+      // ... (la lógica de subida de archivos se puede implementar aquí si es necesario)
+  }
+
+  const finalResponse = { presentation: replacedItem, files: processedFiles };
+  console.log("🐛 [DEBUG] -> Actualización completada. Retornando:", JSON.stringify(finalResponse, null, 2));
+  return finalResponse;
+}
+
+async function DeleteLogicZTProductsPresentacionCosmos(idpresentaok, user) {
+  console.log(`🐛 [DEBUG] -> Iniciando DeleteLogicZTProductsPresentacionCosmos con idpresentaok: ${idpresentaok}, user: ${user}`);
+  if (!idpresentaok) throw new Error('Falta parámetro IdPresentaOK');
+  const container = await getPresentacionesCosmosContainer();
+  console.log(`🐛 [DEBUG] -> Buscando item actual con id: ${idpresentaok}`);
+  const { resource: currentItem } = await container.item(idpresentaok, idpresentaok).read();
+  if (!currentItem) throw new Error(`No se encontró la presentación para borrado lógico con IdPresentaOK: ${idpresentaok}`);
+
+  const updatedItem = {
+    ...currentItem,
+    ACTIVED: false,
+    DELETED: true,
+    MODUSER: user,
+    MODDATE: new Date().toISOString(),
+    HISTORY: [...(currentItem.HISTORY || []), { user, action: 'DELETE_LOGIC', date: new Date().toISOString(), changes: { ACTIVED: false, DELETED: true } }]
+  };
+
+  console.log("🐛 [DEBUG] -> Objeto para borrado lógico (reemplazo):", JSON.stringify(updatedItem, null, 2));
+  const { resource: replacedItem } = await container.item(currentItem.id, currentItem.partitionKey).replace(updatedItem);
+  console.log("🐛 [DEBUG] -> Borrado lógico exitoso.");
+  return replacedItem;
+}
+
+async function DeleteHardZTProductsPresentacionCosmos(idpresentaok) {
+  console.log(`🐛 [DEBUG] -> Iniciando DeleteHardZTProductsPresentacionCosmos con idpresentaok: ${idpresentaok}`);
+  if (!idpresentaok) throw new Error('Falta parámetro IdPresentaOK');
+  const container = await getPresentacionesCosmosContainer();
+  console.log(`🐛 [DEBUG] -> Intentando eliminar permanentemente el item con id: ${idpresentaok}`);
+  const { resource: deletedItem } = await container.item(idpresentaok, idpresentaok).delete();
+  if (!deletedItem) {
+      console.error(`\x1b[31m[ERROR]\x1b[0m -> No se encontró la presentación para eliminar permanentemente con id: ${idpresentaok}`);
+      throw new Error('No se encontró la presentación para eliminar permanentemente');
+  }
+  const response = { mensaje: 'Presentación eliminada permanentemente de Cosmos DB', IdPresentaOK: idpresentaok };
+  console.log("🐛 [DEBUG] -> Borrado físico exitoso. Retornando:", response);
+  return response;
+}
+
+async function ActivateOneZTProductsPresentacionCosmos(idpresentaok, user) {
+  console.log(`🐛 [DEBUG] -> Iniciando ActivateOneZTProductsPresentacionCosmos con idpresentaok: ${idpresentaok}, user: ${user}`);
+  if (!idpresentaok) throw new Error('Falta parámetro IdPresentaOK');
+  const container = await getPresentacionesCosmosContainer();
+  console.log(`🐛 [DEBUG] -> Buscando item actual con id: ${idpresentaok}`);
+  const { resource: currentItem } = await container.item(idpresentaok, idpresentaok).read();
+  if (!currentItem) throw new Error(`No se encontró la presentación para activar con IdPresentaOK: ${idpresentaok}`);
+
+  const updatedItem = {
+    ...currentItem,
+    ACTIVED: true,
+    DELETED: false,
+    MODUSER: user,
+    MODDATE: new Date().toISOString(),
+    HISTORY: [...(currentItem.HISTORY || []), { user, action: 'ACTIVATE', date: new Date().toISOString(), changes: { ACTIVED: true, DELETED: false } }]
+  };
+
+  console.log("🐛 [DEBUG] -> Objeto para activación (reemplazo):", JSON.stringify(updatedItem, null, 2));
+  const { resource: replacedItem } = await container.item(currentItem.id, currentItem.partitionKey).replace(updatedItem);
+  console.log("🐛 [DEBUG] -> Activación exitosa.");
+  return replacedItem;
+}
+
+async function GetZTProductsPresentacionesBySKUIDCosmos(skuid) {
+  console.log(`\n\n\x1b[35m======= INICIO DEBUG INSANO: GetZTProductsPresentacionesBySKUIDCosmos =======\x1b[0m`);
+  console.log(`🐛 [SUPER-DEBUG] -> Función iniciada con SKUID: \x1b[33m'${skuid}'\x1b[0m`);
+
+  if (!skuid) throw new Error('Falta parámetro SKUID');
+  const container = await getPresentacionesCosmosContainer();
+  console.log("🐛 [SUPER-DEBUG] -> Contenedor 'ZTPRODUCTS_PRESENTACIONES' obtenido.");
+
+  const querySpec = {
+    query: "SELECT * FROM c WHERE c.SKUID = @skuid AND c.DELETED != true",
+    parameters: [{ name: "@skuid", value: skuid }]
+  };
+  console.log("🐛 [SUPER-DEBUG] -> QuerySpec preparado para Cosmos DB:");
+  console.log(JSON.stringify(querySpec, null, 2));
+
+  const { resources: items } = await container.items.query(querySpec).fetchAll();
+  console.log(`🐛 [SUPER-DEBUG] -> Query ejecutada. Se encontraron \x1b[32m${items.length}\x1b[0m items.`);
+  console.log("🐛 [SUPER-DEBUG] -> Items retornados:", JSON.stringify(items, null, 2));
+  console.log(`\x1b[35m======= FIN DEBUG INSANO: GetZTProductsPresentacionesBySKUIDCosmos =======\x1b[0m\n\n`);
+  return items;
+}
+
+// ============================================
 // MÉTODOS LOCALES CON BITÁCORA (mismo estilo amigo)
 // ============================================
 async function GetAllMethod(bitacora, req, params, paramString, body, dbServer) {
@@ -263,8 +563,9 @@ async function GetAllMethod(bitacora, req, params, paramString, body, dbServer) 
       case 'MongoDB':
         docs = await GetAllZTProductsPresentaciones();
         break;
-      case 'HANA':
-        throw new Error('HANA no implementado aún para GetAll');
+      case 'CosmosDB':
+        docs = await GetAllZTProductsPresentacionesCosmos();
+        break;
       default:
         throw new Error(`DBServer no soportado: ${dbServer}`);
     }
@@ -308,8 +609,9 @@ async function GetOneMethod(bitacora, params, idpresentaok, dbServer) {
       case 'MongoDB':
         doc = await GetOneZTProductsPresentacion(idpresentaok);
         break;
-      case 'HANA':
-        throw new Error('HANA no implementado aún para GetOne');
+      case 'CosmosDB':
+        doc = await GetOneZTProductsPresentacionCosmos(idpresentaok);
+        break;
       default:
         throw new Error(`DBServer no soportado: ${dbServer}`);
     }
@@ -352,8 +654,9 @@ async function AddOneMethod(bitacora, params, req, dbServer) {
       case 'MongoDB':
         result = await AddOneZTProductsPresentacion(getPayload(req), params.LoggedUser);
         break;
-      case 'HANA':
-        throw new Error('HANA no implementado aún para AddOne');
+      case 'CosmosDB':
+        result = await AddOneZTProductsPresentacionCosmos(getPayload(req), params.LoggedUser);
+        break;
       default:
         throw new Error(`DBServer no soportado: ${dbServer}`);
     }
@@ -407,8 +710,9 @@ async function UpdateOneMethod(bitacora, params, idpresentaok, req, user, dbServ
       case 'MongoDB':
         result = await UpdateOneZTProductsPresentacion(idpresentaok, getPayload(req), user);
         break;
-      case 'HANA':
-        throw new Error('HANA no implementado aún para UpdateOne');
+      case 'CosmosDB':
+        result = await UpdateOneZTProductsPresentacionCosmos(idpresentaok, getPayload(req), user);
+        break;
       default:
         throw new Error(`DBServer no soportado: ${dbServer}`);
     }
@@ -451,8 +755,9 @@ async function DeleteLogicMethod(bitacora, params, idpresentaok, user, dbServer)
       case 'MongoDB':
         result = await DeleteLogicZTProductsPresentacion(idpresentaok, user);
         break;
-      case 'HANA':
-        throw new Error('HANA no implementado aún para DeleteLogic');
+      case 'CosmosDB':
+        result = await DeleteLogicZTProductsPresentacionCosmos(idpresentaok, user);
+        break;
       default:
         throw new Error(`DBServer no soportado: ${dbServer}`);
     }
@@ -501,8 +806,9 @@ async function DeleteHardMethod(bitacora, params, idpresentaok, dbServer) {
       case 'MongoDB':
         result = await DeleteHardZTProductsPresentacion(idpresentaok);
         break;
-      case 'HANA':
-        throw new Error('HANA no implementado aún para DeleteHard');
+      case 'CosmosDB':
+        result = await DeleteHardZTProductsPresentacionCosmos(idpresentaok);
+        break;
       default:
         throw new Error(`DBServer no soportado: ${dbServer}`);
     }
@@ -545,8 +851,9 @@ async function ActivateOneMethod(bitacora, params, idpresentaok, user, dbServer)
       case 'MongoDB':
         result = await ActivateOneZTProductsPresentacion(idpresentaok, user);
         break;
-      case 'HANA':
-        throw new Error('HANA no implementado aún para ActivateOne');
+      case 'CosmosDB':
+        result = await ActivateOneZTProductsPresentacionCosmos(idpresentaok, user);
+        break;
       default:
         throw new Error(`DBServer no soportado: ${dbServer}`);
     }
@@ -585,18 +892,19 @@ async function GetBySKUIDMethod(bitacora, req, params, skuid, dbServer) {
   bitacora.process = 'Obtener presentaciones por SKUID';
 
   try {
-    let files;
+    let presentations;
     switch (dbServer) {
       case 'MongoDB':
-        files = await GetZTProductsPresentacionesBySKUID(skuid);
+        presentations = await GetZTProductsPresentacionesBySKUID(skuid);
         break;
-      case 'HANA':
-        throw new Error('HANA no implementado aún para GetBySKUID');
+      case 'CosmosDB':
+        presentations = await GetZTProductsPresentacionesBySKUIDCosmos(skuid);
+        break;
       default:
         throw new Error(`DBServer no soportado: ${dbServer}`);
     }
 
-    data.dataRes = files;
+    data.dataRes = presentations;
     data.messageUSR = 'Presentaciones obtenidas correctamente por SKUID';
     data.messageDEV = 'GetZTProductsPresentacionesBySKUID ejecutado sin errores';
     bitacora = AddMSG(bitacora, data, 'OK', 200, true);
@@ -805,5 +1113,14 @@ module.exports = {
   DeleteLogicZTProductsPresentacion,
   DeleteHardZTProductsPresentacion,
   ActivateOneZTProductsPresentacion,
-  GetZTProductsPresentacionesBySKUID
+  GetZTProductsPresentacionesBySKUID,
+  // Cosmos DB Functions
+  GetAllZTProductsPresentacionesCosmos,
+  GetOneZTProductsPresentacionCosmos,
+  AddOneZTProductsPresentacionCosmos,
+  UpdateOneZTProductsPresentacionCosmos,
+  DeleteLogicZTProductsPresentacionCosmos,
+  DeleteHardZTProductsPresentacionCosmos,
+  ActivateOneZTProductsPresentacionCosmos,
+  GetZTProductsPresentacionesBySKUIDCosmos
 };
