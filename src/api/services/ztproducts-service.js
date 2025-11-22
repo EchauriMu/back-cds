@@ -11,7 +11,18 @@ const { saveWithAudit } = require('../../helpers/audit-timestap');
 // UTIL: OBTENER PAYLOAD DESDE CDS/EXPRESS
 // ============================================
 function getPayload(req) {
-  return req.data || req.req?.body || null;
+  console.log('🔍 [DEBUG] getPayload - Intentando extraer payload...');
+  let payload = req.data || req.req?.body || null;
+
+  // Limpiar metadatos de Cosmos DB del payload si existen.
+  if (payload) {
+    const cosmosReadOnlyProps = ['_rid', '_self', '_etag', '_attachments', '_ts'];
+    const cleanedPayload = { ...payload };
+    cosmosReadOnlyProps.forEach(prop => delete cleanedPayload[prop]);
+    payload = cleanedPayload;
+  }
+
+  return payload;
 }
 
 // ============================================
@@ -151,6 +162,7 @@ async function AddOneZTProductCosmos(payload, user) {
 
   const newItem = {
     id: payload.SKUID, // 'id' es obligatorio en Cosmos DB, usamos SKUID.
+    partitionKey: payload.SKUID, // ¡IMPORTANTE! Añadir explícitamente la clave de partición.
     ...payload,
     ACTIVED: payload.ACTIVED ?? true,
     DELETED: payload.DELETED ?? false,
@@ -160,7 +172,7 @@ async function AddOneZTProductCosmos(payload, user) {
       event: 'CREATE',
       user: user,
       date: new Date().toISOString(),
-      data: payload
+      changes: payload // Corregido: usar 'changes' para consistencia con UPDATE
     }]
   };
 
@@ -168,26 +180,71 @@ async function AddOneZTProductCosmos(payload, user) {
   return createdItem;
 }
 
-async function UpdateOneZTProductCosmos(skuid, cambios, user) {
+async function UpdateOneZTProductCosmos(req, skuid, user) {
+  console.log(`\n[DEBUG] UpdateOneZTProductCosmos - INICIO. SKUID: ${skuid}, User: ${user}`);
+  const cambios = getPayload(req);
+
   if (!skuid) throw new Error('Falta parámetro SKUID');
   if (!cambios || Object.keys(cambios).length === 0) throw new Error('No se enviaron datos para actualizar');
 
   const container = await getCosmosContainer();
-  const { resource: currentItem } = await container.item(skuid, skuid).read();
-  if (!currentItem) throw new Error('No se encontró el producto para actualizar');
 
-  const updatedItem = { ...currentItem, ...cambios };
+  // 1. BUSCAR EL ITEM CON UNA CONSULTA (QUERY)
+  // Esta es la forma más robusta de encontrar un item sin conocer su estado (si tiene o no partitionKey)
+  const querySpec = {
+    query: "SELECT * FROM c WHERE c.id = @skuid",
+    parameters: [{ name: "@skuid", value: skuid }]
+  };
+  const { resources: items } = await container.items.query(querySpec).fetchAll();
+
+  if (!items || items.length === 0) {
+    throw new Error(`No se encontró el producto para actualizar con SKUID: ${skuid}`);
+  }
+  const currentItem = items[0];
+
+  // 2. IDENTIFICAR LA CLAVE DE PARTICIÓN ACTUAL Y LA NUEVA
+  // La clave actual es la que tiene el documento en la BD (puede ser undefined para datos viejos)
+  const currentPartitionKey = currentItem.partitionKey;
+  // La nueva clave (la correcta) siempre debe ser el SKUID.
+  const newPartitionKey = currentItem.SKUID;
+
+  console.log(`[DEBUG] UpdateOneZTProductCosmos - PartitionKey actual: ${currentPartitionKey}, PartitionKey nueva: ${newPartitionKey}`);
+
+  if (cambios.CATEGORIAS && typeof cambios.CATEGORIAS === 'string') {
+    try {
+      cambios.CATEGORIAS = JSON.parse(cambios.CATEGORIAS);
+    } catch (e) {
+      throw new Error('El campo CATEGORIAS no es un JSON de array válido.');
+    }
+  }
+
+  // 3. MEZCLAR CAMBIOS Y ASEGURAR DATOS
+  const updatedItem = {
+    ...currentItem,
+    ...cambios,
+    id: currentItem.id,
+    SKUID: currentItem.SKUID,
+    partitionKey: newPartitionKey, // Aseguramos que el campo partitionKey se guarde con el valor correcto.
+  };
+
   updatedItem.MODUSER = user;
   updatedItem.MODDATE = new Date().toISOString();
+
   updatedItem.HISTORY = updatedItem.HISTORY || [];
   updatedItem.HISTORY.push({
     event: 'UPDATE',
     user: user,
     date: new Date().toISOString(),
-    data: cambios
+    changes: cambios
   });
 
-  const { resource: replacedItem } = await container.item(skuid, skuid).replace(updatedItem);
+  // 4. REEMPLAZAR EL ITEM USANDO SU ID Y SU CLAVE DE PARTICIÓN *ACTUAL*
+  console.log(`[DEBUG] Reemplazando item con ID '${currentItem.id}' en su partición actual:`, currentPartitionKey);
+  const { resource: replacedItem } = await container
+    .item(currentItem.id, currentPartitionKey)
+    .replace(updatedItem);
+
+  console.log('[DEBUG] UpdateOneZTProductCosmos - Reemplazo exitoso.');
   return replacedItem;
 }
 
@@ -205,13 +262,16 @@ async function crudZTProducts(req) {
   let data = DATA();
   
   try {
+    console.log('\n[DEBUG] crudZTProducts - INICIO');
     // 1. EXTRAER Y SERIALIZAR PARÁMETROS
     const params = req.req?.query || {};
     const body = req.req?.body;
     const paramString = params ? new URLSearchParams(params).toString().trim() : '';
     const { ProcessType, LoggedUser, DBServer, skuid } = params;
+    const dbServer = DBServer || 'MongoDB'; // Default explícito
     
     // 2. VALIDAR PARÁMETROS OBLIGATORIOS
+    console.log(`[DEBUG] crudZTProducts - ProcessType: ${ProcessType}, DBServer: ${dbServer}, SKUID: ${skuid}`);
     if (!ProcessType) {
       data.process = 'Validación de parámetros obligatorios';
       data.messageUSR = 'Falta parámetro obligatorio: ProcessType';
@@ -231,7 +291,6 @@ async function crudZTProducts(req) {
     }
     
     // 3. CONFIGURAR CONTEXTO DE LA BITÁCORA
-    const dbServer = DBServer || 'MongoDB'; // Default explícito
     bitacora.processType = ProcessType;
     bitacora.loggedUser = LoggedUser;
     bitacora.dbServer = dbServer;
@@ -267,6 +326,7 @@ async function crudZTProducts(req) {
         break;
         
       case 'AddOne':
+        console.log('[DEBUG] crudZTProducts - Enrutando a AddProductMethod');
         bitacora = await AddProductMethod(bitacora, params, paramString, body, req, dbServer);
         if (!bitacora.success) {
           bitacora.finalRes = true;
@@ -275,6 +335,7 @@ async function crudZTProducts(req) {
         break;
 
       case 'UpdateOne':
+        console.log('[DEBUG] crudZTProducts - Enrutando a UpdateProductMethod');
         if (!skuid) {
           data.process = 'Validación de parámetros';
           data.messageUSR = 'Falta parámetro obligatorio: skuid';
@@ -562,6 +623,7 @@ async function AddProductMethod(bitacora, params, paramString, body, req, dbServ
 }
 
 async function UpdateProductMethod(bitacora, params, paramString, body, req, user, dbServer) {
+    console.log('\n[DEBUG] UpdateProductMethod - INICIO');
     let data = DATA();
     
     // Configurar contexto de data
@@ -587,6 +649,7 @@ async function UpdateProductMethod(bitacora, params, paramString, body, req, use
     try {
         let result;
         const skuid = params.skuid || params.SKUID;
+        console.log(`[DEBUG] UpdateProductMethod - SKUID: ${skuid}, DBServer: ${dbServer}`);
         const isActivate = params.operation === 'activate' || params.type === 'activate';
         
         switch (dbServer) {
@@ -600,13 +663,15 @@ async function UpdateProductMethod(bitacora, params, paramString, body, req, use
                 }
                 break;
             case 'CosmosDB':
+                console.log('[DEBUG] UpdateProductMethod - Llamando a UpdateOneZTProductCosmos');
                 // Para Cosmos, la activación es una actualización. Se puede añadir lógica para diferenciar si es necesario.
-                result = await UpdateOneZTProductCosmos(skuid, getPayload(req), user);
+                result = await UpdateOneZTProductCosmos(req, skuid, user);
                 break;
             default:
                 throw new Error(`DBServer no soportado: ${dbServer}`);
         }
         
+        console.log('[DEBUG] UpdateProductMethod - Resultado de la operación de BD:', JSON.stringify(result, null, 2));
         data.dataRes = result;
         data.messageUSR = isActivate ? 'Producto activado exitosamente' : 'Producto actualizado exitosamente';
         data.messageDEV = isActivate ? 'ActivateOneZTProduct ejecutado sin errores' : 'UpdateOneZTProduct ejecutado sin errores';
@@ -616,6 +681,7 @@ async function UpdateProductMethod(bitacora, params, paramString, body, req, use
         return bitacora;
         
     } catch (error) {
+        console.error('[ERROR] UpdateProductMethod - CATCH:', error);
         // MANEJO ESPECÍFICO DE ERRORES
         if (error.message.includes('No se encontró') || error.message.includes('no encontrado')) {
             data.messageUSR = 'Error al actualizar el producto - producto no encontrado';

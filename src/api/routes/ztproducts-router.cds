@@ -11,6 +11,7 @@ service ZTProductsService @(path:'/api/ztproducts') {
     @Core.Description: 'CRUD de Productos con Bitácora'
     @path: 'crudProducts'
     action crudProducts(
+             id: String,
         ProcessType: String,
         PRODUCTNAME: String,
         SKUID: String,
@@ -23,7 +24,13 @@ service ZTProductsService @(path:'/api/ztproducts') {
         REGUSER: String,
         MODUSER: String,
         ACTIVED: Boolean,
-        DELETED: Boolean
+        DELETED: Boolean,
+        partitionKey: String, // Añadimos el campo que faltaba
+        _rid: String,
+        _self: String,
+        _etag: String,
+        _attachments: String,
+        _ts: Integer64
     ) returns array of Products;
     
     

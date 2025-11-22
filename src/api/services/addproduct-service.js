@@ -1,6 +1,7 @@
 // ============================================
 // IMPORTS
 // ============================================
+const { getCosmosDatabase } = require('../../config/connectToMongoDB.config');
 const ZTProduct = require('../models/mongodb/ztproducts');
 const { ZTProducts_Presentaciones } = require('../models/mongodb/ztproducts_presentaciones');
 const { saveWithAudit } = require('../../helpers/audit-timestap');
@@ -17,16 +18,31 @@ function getPayload(req) {
 }
 
 // ============================================
+// UTIL: OBTENER CONTENEDOR DE COSMOS DB
+// ============================================
+async function getCosmosContainer(containerName) {
+  const database = getCosmosDatabase();
+  if (!database) {
+    throw new Error('La conexión con Cosmos DB no está disponible.');
+  }
+  const { container } = await database.containers.createIfNotExists({ id: containerName });
+  return container;
+}
+
+
+// ============================================
 // SERVICIO PRINCIPAL
 // ============================================
 async function addProductWithPresentations(req) {
   let bitacora = BITACORA();
   let data = DATA();
 
-  const { LoggedUser } = req.req?.query || {};
+  const { LoggedUser, DBServer } = req.req?.query || {};
+  const dbServer = DBServer || 'MongoDB'; // Default a MongoDB
 
   try {
     // 1. VALIDAR PARÁMETROS
+
     if (!LoggedUser) {
       data.messageDEV = "El parámetro LoggedUser es obligatorio.";
       data.messageUSR = "Falta información de usuario.";
@@ -56,6 +72,7 @@ async function addProductWithPresentations(req) {
     bitacora.process = 'Crear Producto con Presentaciones';
     bitacora.processType = 'AddProductWithPresentations';
     bitacora.loggedUser = LoggedUser;
+    bitacora.dbServer = dbServer;
     bitacora.api = '/api/add-product/addProductWithPresentations';
 
     // 3. CREAR EL PRODUCTO PRINCIPAL
@@ -63,25 +80,61 @@ async function addProductWithPresentations(req) {
     try {
       // --- Lógica de AddOneZTProduct integrada ---
       const required = ['SKUID', 'PRODUCTNAME', 'DESSKU', 'IDUNIDADMEDIDA'];
-      const missing = required.filter((k) => !product[k]);
+      const missing = required.filter((k) => !product || !product[k]);
       if (missing.length) throw new Error(`Faltan campos obligatorios en el producto: ${missing.join(', ')}`);
+      
+      switch (dbServer) {
+        case 'MongoDB': {
+          const exists = await ZTProduct.findOne({ SKUID: product.SKUID }).lean();
+          if (exists) throw new Error(`Ya existe un producto con el SKUID: ${product.SKUID}`);
 
-      // Validar que el SKUID no exista
-      const exists = await ZTProduct.findOne({ SKUID: product.SKUID }).lean();
-      if (exists) throw new Error(`Ya existe un producto con el SKUID: ${product.SKUID}`);
+          const productData = {
+            SKUID: product.SKUID,
+            PRODUCTNAME: product.PRODUCTNAME,
+            DESSKU: product.DESSKU,
+            MARCA: product.MARCA || '',
+            CATEGORIAS: product.CATEGORIAS || [],
+            IDUNIDADMEDIDA: product.IDUNIDADMEDIDA,
+            BARCODE: product.BARCODE || '',
+            INFOAD: product.INFOAD || '',
+          };
+          createdProduct = await saveWithAudit(ZTProduct, {}, productData, LoggedUser, 'CREATE');
+          break;
+        }
+        case 'CosmosDB': {
+          const container = await getCosmosContainer('ZTPRODUCTS');
+          // FORMA CORRECTA DE VERIFICAR SI EXISTE: Usar una consulta.
+          // Esto funciona sin importar si el item tiene o no partitionKey.
+          const querySpec = {
+            query: "SELECT c.id FROM c WHERE c.id = @skuid",
+            parameters: [{ name: "@skuid", value: product.SKUID }]
+          };
+          const { resources: items } = await container.items.query(querySpec).fetchAll();
+          if (items.length > 0) throw new Error(`Ya existe un producto con el SKUID: ${product.SKUID}`);
 
-      const productData = {
-        SKUID: product.SKUID,
-        PRODUCTNAME: product.PRODUCTNAME,
-        DESSKU: product.DESSKU,
-        MARCA: product.MARCA || '',
-        CATEGORIAS: product.CATEGORIAS || [],
-        IDUNIDADMEDIDA: product.IDUNIDADMEDIDA,
-        BARCODE: product.BARCODE || '',
-        INFOAD: product.INFOAD || '',
-      };
-      createdProduct = await saveWithAudit(ZTProduct, {}, productData, LoggedUser, 'CREATE');
-      // --- Fin de lógica integrada ---
+          const newItem = {
+            id: product.SKUID,
+            partitionKey: product.SKUID, // ¡IMPORTANTE! Añadir explícitamente la clave de partición.
+            SKUID: product.SKUID, // Aseguramos que el campo SKUID también exista
+            ...product,
+            ACTIVED: product.ACTIVED ?? true,
+            DELETED: product.DELETED ?? false,
+            REGUSER: LoggedUser,
+            REGDATE: new Date().toISOString(),
+            HISTORY: [{
+              user: LoggedUser,
+              action: "CREATE",
+              date: new Date().toISOString(),
+              changes: product
+            }]
+          };
+          const { resource: createdItem } = await container.items.create(newItem);
+          createdProduct = createdItem;
+          break;
+        }
+        default:
+          throw new Error(`DBServer no soportado: ${dbServer}`);
+      }
 
     } catch (productError) {
       data.process = 'Error al crear el producto padre';
@@ -101,37 +154,73 @@ async function addProductWithPresentations(req) {
           const requiredPres = ['IdPresentaOK', 'NOMBREPRESENTACION', 'Descripcion'];
           const missingPres = requiredPres.filter((k) => !pres[k]);
           if (missingPres.length) throw new Error(`Faltan campos obligatorios en la presentación '${pres.IdPresentaOK || ''}': ${missingPres.join(', ')}`);
+          
+          let newPresentation;
+          switch(dbServer) {
+            case 'MongoDB': {
+              const existsPres = await ZTProducts_Presentaciones.findOne({ IdPresentaOK: pres.IdPresentaOK }).lean();
+              if (existsPres) throw new Error(`Ya existe una presentación con el ID: ${pres.IdPresentaOK}`);
 
-          const existsPres = await ZTProducts_Presentaciones.findOne({ IdPresentaOK: pres.IdPresentaOK }).lean();
-          if (existsPres) throw new Error(`Ya existe una presentación con el ID: ${pres.IdPresentaOK}`);
+              let propiedades = {};
+              if (typeof pres.PropiedadesExtras === 'string' && pres.PropiedadesExtras.trim() !== '') {
+                try {
+                  propiedades = JSON.parse(pres.PropiedadesExtras);
+                } catch (jsonError) {
+                  throw new Error(`El formato de PropiedadesExtras para la presentación '${pres.IdPresentaOK}' no es un JSON válido.`);
+                }
+              }
 
-          let propiedades = {};
-          if (typeof pres.PropiedadesExtras === 'string' && pres.PropiedadesExtras.trim() !== '') {
-            try {
-              propiedades = JSON.parse(pres.PropiedadesExtras);
-            } catch (jsonError) {
-              throw new Error(`El formato de PropiedadesExtras para la presentación '${pres.IdPresentaOK}' no es un JSON válido.`);
+              const presentationData = {
+                IdPresentaOK: pres.IdPresentaOK,
+                SKUID: createdProduct.SKUID,
+                NOMBREPRESENTACION: pres.NOMBREPRESENTACION,
+                Descripcion: pres.Descripcion,
+                PropiedadesExtras: propiedades,
+              };
+              newPresentation = await saveWithAudit(ZTProducts_Presentaciones, {}, presentationData, LoggedUser, 'CREATE');
+              break;
             }
+            case 'CosmosDB': {
+              const container = await getCosmosContainer('ZTPRODUCTS_PRESENTACIONES');
+              const { resource: existing } = await container.item(pres.IdPresentaOK, createdProduct.id).read().catch(() => ({}));
+              if (existing) throw new Error(`Ya existe una presentación con el ID: ${pres.IdPresentaOK}`);
+
+              let propiedades = {};
+              if (typeof pres.PropiedadesExtras === 'string' && pres.PropiedadesExtras.trim() !== '') {
+                  propiedades = JSON.parse(pres.PropiedadesExtras);
+              } else if (typeof pres.PropiedadesExtras === 'object') {
+                  propiedades = pres.PropiedadesExtras;
+              }
+
+              const newItem = {
+                id: pres.IdPresentaOK,
+                SKUID: createdProduct.id,
+                ...pres,
+                PropiedadesExtras: propiedades,
+                ACTIVED: pres.ACTIVED ?? true,
+                DELETED: pres.DELETED ?? false,
+                REGUSER: LoggedUser,
+                REGDATE: new Date().toISOString(),
+                HISTORY: [{
+                  user: LoggedUser,
+                  action: "CREATE",
+                  date: new Date().toISOString(),
+                  changes: pres
+                }]
+              };
+              const { resource: createdItem } = await container.items.create(newItem);
+              newPresentation = createdItem;
+              break;
+            }
+            default:
+              throw new Error(`DBServer no soportado: ${dbServer}`);
           }
-
-          const presentationData = {
-            IdPresentaOK: pres.IdPresentaOK,
-            SKUID: createdProduct.SKUID, // Se asocia al producto padre ya creado
-            NOMBREPRESENTACION: pres.NOMBREPRESENTACION, // Se toma directamente del payload
-            Descripcion: pres.Descripcion,
-            PropiedadesExtras: propiedades, // Se asigna el objeto JSON ya parseado
-          };
-
-          const newPresentation = await saveWithAudit(ZTProducts_Presentaciones, {}, presentationData, LoggedUser, 'CREATE');
-          // --- Fin de lógica integrada ---
 
           createdPresentations.push(newPresentation);
 
           // 4.1. SUBIR ARCHIVOS DE LA PRESENTACIÓN (SI EXISTEN)
           if (pres.files && pres.files.length > 0) {
             for (const file of pres.files) {
-              const { fileBase64, originalname, mimetype, ...restOfFile } = file;
-
               // 1. Preparar el objeto 'file' para el helper
               const cleanBase64 = fileBase64.replace(/^data:([A-Za-z-+\/]+);base64,/, '').replace(/\r?\n|\r/g, '');
               const fileBuffer = Buffer.from(cleanBase64, 'base64');
@@ -144,15 +233,15 @@ async function addProductWithPresentations(req) {
               // 2. Preparar el objeto 'body' para el helper
               // Se mapean explícitamente los campos del modelo para evitar pasar propiedades no deseadas.
               const bodyForHelper = {
-                SKUID: createdProduct.SKUID,
-                IdPresentaOK: pres.IdPresentaOK, // Asociar archivo a la presentación
+                SKUID: createdProduct.SKUID || createdProduct.id,
+                IdPresentaOK: newPresentation.IdPresentaOK || newPresentation.id, // Asociar archivo a la presentación
                 FILETYPE: file.FILETYPE,
                 PRINCIPAL: file.PRINCIPAL,
                 INFOAD: file.INFOAD,
               };
 
               // 3. Llamar al helper con los 3 argumentos correctos
-              const uploadResult = await handleUploadZTProductFileCDS(fileForHelper, bodyForHelper, LoggedUser);
+              const uploadResult = await handleUploadZTProductFileCDS(fileForHelper, bodyForHelper, LoggedUser, dbServer);
 
               if (uploadResult.error || uploadResult.status >= 400) {
                 // Si la subida falla, lanzamos un error para activar el rollback
@@ -165,19 +254,30 @@ async function addProductWithPresentations(req) {
         } catch (presentationError) {
           // -- INICIO DE ROLLBACK --
           // Si una presentación o un archivo falla, eliminamos todo lo creado hasta ahora.
-          // --- Lógica de DeleteHardZTProduct integrada ---
-          await ZTProduct.findOneAndDelete({ SKUID: createdProduct.SKUID });
-          // --- Fin de lógica integrada ---
+          switch(dbServer) {
+            case 'MongoDB':
+              await ZTProduct.findOneAndDelete({ SKUID: createdProduct.SKUID });
+              const presentaOKsToDeleteMongo = createdPresentations.map(p => p.IdPresentaOK);
+              if (presentaOKsToDeleteMongo.length > 0) {
+                await ZTProducts_Presentaciones.deleteMany({ IdPresentaOK: { $in: presentaOKsToDeleteMongo } });
+              }
+              break;
+            case 'CosmosDB':
+              const productContainer = await getCosmosContainer('ZTPRODUCTS');
+              await productContainer.item(createdProduct.id, createdProduct.id).delete().catch(() => {});
 
-          // Eliminar presentaciones ya creadas en este proceso
-          const presentaOKsToDelete = createdPresentations.map(p => p.IdPresentaOK);
-          if (presentaOKsToDelete.length > 0) {
-            await ZTProducts_Presentaciones.deleteMany({ IdPresentaOK: { $in: presentaOKsToDelete } });
+              const presContainer = await getCosmosContainer('ZTPRODUCTS_PRESENTACIONES');
+              const presentaOKsToDeleteCosmos = createdPresentations.map(p => p.id);
+              for (const presId of presentaOKsToDeleteCosmos) {
+                await presContainer.item(presId, createdProduct.id).delete().catch(() => {});
+              }
+              break;
           }
+
           // TODO: En un futuro, se podría añadir la lógica para borrar los archivos ya subidos a Azure.
           // -- FIN DE ROLLBACK --
 
-          data.process = `Error al crear la presentación ${pres.IdPresentaOK || ''}`;
+          data.process = `Error al crear la presentación ${pres?.IdPresentaOK || ''}`;
           data.messageDEV = presentationError.message;
           data.messageUSR = `Se creó el producto, pero falló la creación de una de sus presentaciones. Se ha revertido la operación.`;
           bitacora = AddMSG(bitacora, data, 'FAIL', 400, true);

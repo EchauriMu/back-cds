@@ -1,7 +1,9 @@
 namespace mongodb;
 
 entity ZTPRODUCTS {
-  key SKUID     : String(100);
+  key id        : String(100); // Clave principal para compatibilidad con CAP y Cosmos DB
+  @odata.etag
+  SKUID         : String(100); // Mantenemos SKUID como identificador de negocio
   PRODUCTNAME   : String(255);
   DESSKU        : String(255);
   MARCA         : String(100);
@@ -15,4 +17,11 @@ entity ZTPRODUCTS {
   MODDATE       : DateTime;
   ACTIVED       : Boolean;
   DELETED       : Boolean;
+
+  // Campos de metadatos de Cosmos DB para evitar errores de validación en CAP
+  _rid          : String;
+  _self         : String;
+  _etag         : String;
+  _attachments  : String;
+  _ts           : Integer64; // 'Integer64' es el tipo correcto para timestamps numéricos en CDS
 }
