@@ -91,6 +91,37 @@ async function GetZTPreciosItemsByIdPresentaOK(idPresentaOK) {
 }
 
 // ============================================
+// Obtener precios por IdListaOK
+// ============================================
+// Esta función obtiene SOLO los precios que pertenecen a una lista específica
+// En lugar de hacer múltiples llamadas a la API, obtenemos todos los precios de una lista en UNA sola consulta
+//
+// Parámetro:
+//   - idListaOK: El ID de la lista (ej: "LISTA-RETAIL-2025")
+//
+// Retorna:
+//   - Array de objetos con todos los precios de esa lista
+//   - Ejemplo: [{ IdPrecioOK: "P001", IdListaOK: "LISTA-RETAIL-2025", SKUID: "HOG001", Precio: 15000 }, ...]
+//
+// Cómo funciona:
+//   1. Valida que idListaOK venga completo (no vacío)
+//   2. Busca en MongoDB la colección ZTPrecios_ITEMS
+//   3. Filtra por: IdListaOK coincida AND DELETED no sea true (soft delete)
+//   4. .lean() retorna datos planos (más rápido que documentos Mongoose)
+async function GetZTPreciosItemsByIdListaOK(idListaOK) {
+  // ⚠️ VALIDACIÓN: Si no viene el parámetro, lanza error inmediatamente
+  if (!idListaOK) throw new Error('Falta parámetro IdListaOK');
+  
+  // 🔍 CONSULTA MONGODB:
+  // - ZTPrecios_ITEMS: colección donde se guardan todos los precios
+  // - .find({ IdListaOK: idListaOK, DELETED: { $ne: true } }): 
+  //     • Busca documentos donde IdListaOK coincida con el parámetro
+  //     • Y excluye documentos marcados como DELETED=true
+  // - .lean(): Retorna objetos JSON planos (optimización de velocidad)
+  return await ZTPrecios_ITEMS.find({ IdListaOK: idListaOK, DELETED: { $ne: true } }).lean();
+}
+
+// ============================================
 // MÉTODOS con BITÁCORA (estilo amigo)
 // ============================================
 async function GetAllMethod(bitacora, req, params, paramString, body, dbServer) {
@@ -427,6 +458,78 @@ async function GetByIdPresentaOKMethod(bitacora, req, params, idPresentaOK, dbSe
 }
 
 // ============================================
+// Método HTTP para GetByIdListaOK
+// ============================================
+// Esta función es el "orquestador" que maneja la solicitud HTTP
+// Se encarga de:
+//   1. Registrar la solicitud en la bitácora (auditoría)
+//   2. Validar que la base de datos sea soportada
+//   3. Llamar a GetZTPreciosItemsByIdListaOK() para obtener datos
+//   4. Formatear la respuesta con mensajes apropiados
+//
+// Parámetros:
+//   - bitacora: Objeto que registra todas las operaciones (para auditoría)
+//   - req: La solicitud HTTP original
+//   - params: Parámetros de la query string (ProcessType, LoggedUser, etc.)
+//   - idListaOK: El ID de la lista a consultar
+//   - dbServer: La base de datos a usar ('MongoDB' o 'HANA')
+//
+// Retorna:
+//   - bitacora: Objeto actualizado con resultado, datos, y mensajes
+async function GetByIdListaOKMethod(bitacora, req, params, idListaOK, dbServer) {
+  // 📋 Crear objeto DATA para almacenar información de esta operación
+  let data = DATA();
+
+  // 📝 REGISTRAR INFORMACIÓN DE LA SOLICITUD (para auditoría)
+  data.process = 'Obtener precios por IdListaOK';           // ¿Qué estamos haciendo?
+  data.processType = params.ProcessType || '';              // Tipo de proceso (GetByIdListaOK)
+  data.loggedUser = params.LoggedUser || '';                // ¿Quién hace la solicitud?
+  data.dbServer = dbServer;                                 // ¿Cuál BD? (MongoDB, HANA)
+  data.server = process.env.SERVER_NAME || '';              // ¿En qué servidor?
+  data.method = req.req?.method || 'No Especificado';      // ¿Qué método HTTP? (GET, POST, etc)
+  data.api = '/api/ztprecios-items/preciosItemsCRUD';      // ¿Cuál endpoint?
+
+  // 📋 Copiar información a la bitácora para trazabilidad
+  bitacora.processType = params.ProcessType || '';
+  bitacora.loggedUser = params.LoggedUser || '';
+  bitacora.dbServer = dbServer;
+  bitacora.server = process.env.SERVER_NAME || '';
+  bitacora.process = 'Obtener precios por IdListaOK';
+
+  // 🛡️ TRY-CATCH: Captura cualquier error sin detener la app
+  try {
+    let items;  // Variable donde guardaremos los resultados
+
+    // 🔀 VALIDAR BASE DE DATOS
+    switch (dbServer) {
+      case 'MongoDB':
+        // ✅ MongoDB está soportado, ejecutar consulta
+        items = await GetZTPreciosItemsByIdListaOK(idListaOK);
+        break;
+      default:
+        // ❌ Base de datos no reconocida
+        throw new Error(`DBServer no soportado: ${dbServer}`);
+    }
+
+    // ✅ ÉXITO: Preparar respuesta positiva
+    data.dataRes = items;  // Guardar los precios obtenidos
+    data.messageUSR = 'Precios obtenidos correctamente por Lista';  // Mensaje para usuario
+    data.messageDEV = 'GetZTPreciosItemsByIdListaOK ejecutado sin errores';  // Mensaje para desarrollador
+    bitacora = AddMSG(bitacora, data, 'OK', 200, true);  // Agregar mensaje con código HTTP 200 (éxito)
+    bitacora.success = true;  // Marcar como exitoso
+    return bitacora;  // Retornar resultado
+
+  } catch (error) {
+    // ❌ ERROR: Preparar respuesta de error
+    data.messageUSR = 'Error al obtener los precios por Lista';  // Mensaje para usuario
+    data.messageDEV = error.message;  // Mensaje técnico del error
+    bitacora = AddMSG(bitacora, data, 'FAIL', 500, true);  // Agregar mensaje con código HTTP 500 (error interno)
+    bitacora.success = false;  // Marcar como fallido
+    return bitacora;  // Retornar error
+  }
+}
+
+// ============================================
 // ORQUESTADOR PRINCIPAL (CAP Action)
 //    ProcessType: GetAll | GetOne | AddOne | UpdateOne | DeleteLogic | DeleteHard | ActivateOne
 //    Params esperados: LoggedUser, DBServer (opcional), idpresentaok (para One/Update/Delete/Activate)
@@ -436,15 +539,29 @@ async function ZTPreciosItemsCRUD(req) {
   let data = DATA();
 
   try {
-    const params = req.req?.query || {};
-    const body = req.req?.body;
-    const paramString = params ? new URLSearchParams(params).toString().trim() : '';
-    const { ProcessType, LoggedUser, DBServer, IdPrecioOK, idPresentaOK } = params;
+    const params = req.req?.query || {};  // Extraer parámetros de la URL query string
+    const body = req.req?.body;  // Extraer body de la solicitud (para POST)
+    const paramString = params ? new URLSearchParams(params).toString().trim() : '';  // Convertir params a string para logueo
+    
+    // ============================================
+    // 🔹 DESTRUCTURING: Extraer parámetros específicos
+    // ============================================
+    // Esto extrae variables individuales del objeto params
+    // Ejemplo de URL: /api/endpoint?ProcessType=GetByIdListaOK&idListaOK=LISTA-RETAIL&LoggedUser=admin
+    // Resultado: { ProcessType: "GetByIdListaOK", LoggedUser: "admin", idListaOK: "LISTA-RETAIL", ... }
+    const { 
+      ProcessType,      // 📋 Tipo de operación (GetAll, GetOne, AddOne, etc.)
+      LoggedUser,       // 👤 Usuario que hace la solicitud (para auditoría)
+      DBServer,         // 🗄️ Base de datos (MongoDB, HANA, etc.)
+      IdPrecioOK,       // 💰 ID del precio (usado en operaciones de un solo precio)
+      idPresentaOK,     // 📦 ID de presentación (usado en GetByIdPresentaOK)
+      idListaOK         // 📄 ID de lista - NUEVO: Usado en GetByIdListaOK para obtener TODOS los precios de esa lista
+    } = params;
 
     if (!ProcessType) {
       data.process = 'Validación de parámetros obligatorios';
       data.messageUSR = 'Falta parámetro obligatorio: ProcessType';
-      data.messageDEV = 'Valores válidos: GetAll, GetOne, GetByIdPresentaOK, AddOne, UpdateOne, DeleteLogic, DeleteHard, ActivateOne';
+      data.messageDEV = 'Valores válidos: GetAll, GetOne, GetByIdPresentaOK, GetByIdListaOK, AddOne, UpdateOne, DeleteLogic, DeleteHard, ActivateOne';
       bitacora = AddMSG(bitacora, data, 'FAIL', 400, true);
       bitacora.finalRes = true;
       return FAIL(bitacora);
@@ -556,10 +673,42 @@ async function ZTPreciosItemsCRUD(req) {
         if (!bitacora.success) { bitacora.finalRes = true; return FAIL(bitacora); }
         break;
 
+      // ============================================
+      // CASE: GetByIdListaOK
+      // ============================================
+      // Este case maneja solicitudes para obtener precios de una lista específica
+      // 
+      // Flujo:
+      //   1. Valida que el parámetro idListaOK no esté vacío
+      //   2. Si está vacío → retorna error 400 (Bad Request)
+      //   3. Si está completo → llama GetByIdListaOKMethod() para obtener datos
+      //   4. Si la operación falló → retorna el error
+      //   5. Si todo bien → continúa (break)
+      case 'GetByIdListaOK':
+        // ⚠️ VALIDACIÓN: Verificar que idListaOK vino en la solicitud
+        if (!idListaOK) {
+          data.process = 'Validación de parámetros';  // Tipo de validación
+          data.messageUSR = 'Falta parámetro obligatorio: idListaOK';  // Mensaje usuario
+          data.messageDEV = 'idListaOK es requerido para GetByIdListaOK';  // Mensaje técnico
+          bitacora = AddMSG(bitacora, data, 'FAIL', 400, true);  // Agregar mensaje de error (código 400)
+          bitacora.finalRes = true;  // Marcar como respuesta final
+          return FAIL(bitacora);  // Retornar error sin continuar
+        }
+        
+        // ✅ El parámetro existe, llamar al método para obtener los precios
+        bitacora = await GetByIdListaOKMethod(bitacora, req, params, idListaOK, dbServer);
+        
+        // ❌ Verificar si la operación fue exitosa
+        if (!bitacora.success) { 
+          bitacora.finalRes = true;  // Marcar como respuesta final
+          return FAIL(bitacora);  // Retornar error si falló
+        }
+        break;  // ✅ Si todo bien, salir del case y continuar
+
       default:
         data.process = 'Validación de ProcessType';
         data.messageUSR = 'ProcessType inválido o no especificado';
-        data.messageDEV = 'Debe ser: GetAll, GetOne, GetByIdPresentaOK, AddOne, UpdateOne, DeleteLogic, DeleteHard, ActivateOne';
+        data.messageDEV = 'Debe ser: GetAll, GetOne, GetByIdPresentaOK, GetByIdListaOK, AddOne, UpdateOne, DeleteLogic, DeleteHard, ActivateOne';
         bitacora = AddMSG(bitacora, data, 'FAIL', 400, true);
         bitacora.finalRes = true;
         return FAIL(bitacora);
@@ -592,17 +741,28 @@ async function ZTPreciosItemsCRUD(req) {
 }
 
 // ============================================
-// EXPORTS
+// EXPORTS: Funciones disponibles para importar
 // ============================================
+// Esto hace que las funciones estén disponibles para ser importadas desde otros archivos
+// Ejemplo de uso en otro archivo:
+//   const { GetZTPreciosItemsByIdListaOK } = require('./ztprecios_items-service');
+//   const precios = await GetZTPreciosItemsByIdListaOK('LISTA-RETAIL-2025');
+//
+// Solo exponemos las funciones principales, las internas no se exportan
 module.exports = {
+  // 🎯 Función principal que orquesta todo
   ZTPreciosItemsCRUD,
 
-  GetAllZTPreciosItems,
-  GetOneZTPreciosItem,
-  AddOneZTPreciosItem,
-  UpdateOneZTPreciosItem,
-  DeleteLogicZTPreciosItem,
-  DeleteHardZTPreciosItem,
-  ActivateOneZTPreciosItem,
-  GetZTPreciosItemsByIdPresentaOK
+  // 🔹 Funciones CRUD de base de datos (consultas MongoDB)
+  GetAllZTPreciosItems,              // Obtener todos los precios
+  GetOneZTPreciosItem,               // Obtener un precio específico
+  AddOneZTPreciosItem,               // Crear un nuevo precio
+  UpdateOneZTPreciosItem,            // Actualizar un precio existente
+  DeleteLogicZTPreciosItem,          // Borrado lógico (marcar como eliminado)
+  DeleteHardZTPreciosItem,           // Borrado físico (eliminar permanentemente)
+  ActivateOneZTPreciosItem,          // Activar un precio inactivo
+  
+  // 🔹 Funciones para obtener por relaciones
+  GetZTPreciosItemsByIdPresentaOK,   // Obtener precios por ID de presentación (ya existía)
+  GetZTPreciosItemsByIdListaOK       // ⭐ NUEVA: Obtener precios por ID de lista
   };
