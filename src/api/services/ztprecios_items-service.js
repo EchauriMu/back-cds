@@ -1,6 +1,7 @@
 // ============================================
 // IMPORTS
 // ============================================
+const { getCosmosDatabase } = require('../../config/connectToMongoDB.config');
 const { ZTPrecios_ITEMS } = require('../models/mongodb/ztprecios_items');
 const { OK, FAIL, BITACORA, DATA, AddMSG } = require('../../middlewares/respPWA.handler');
 const { saveWithAudit } = require('../../helpers/audit-timestap');
@@ -8,6 +9,26 @@ const { saveWithAudit } = require('../../helpers/audit-timestap');
 // Util: payload desde CDS/Express
 function getPayload(req) {
   return req.data || req.req?.body || null;
+}
+
+// ============================================
+// UTIL: OBTENER CONTENEDOR DE COSMOS DB
+// ============================================
+async function getCosmosContainer(containerName, partitionKeyPath) {
+  const database = getCosmosDatabase();
+  if (!database) {
+    throw new Error('La conexión con Cosmos DB no está disponible.');
+  }
+  const { container } = await database.containers.createIfNotExists({
+    id: containerName,
+    partitionKey: { paths: [partitionKeyPath] }
+  });
+  return container;
+}
+
+// Helper específico para este servicio
+async function getPreciosItemsCosmosContainer() {
+  return getCosmosContainer('ZTPRECIOS_ITEMS', '/IdPrecioOK');
 }
 
 // ============================================
@@ -91,6 +112,170 @@ async function GetZTPreciosItemsByIdPresentaOK(idPresentaOK) {
 }
 
 // ============================================
+// CRUD COSMOS DB
+// ============================================
+async function GetAllZTPreciosItemsCosmos() {
+  console.log("\n\n\x1b[35m======= INICIO DEBUG INSANO: GetAllZTPreciosItemsCosmos =======\x1b[0m");
+  const container = await getPreciosItemsCosmosContainer();
+  const query = "SELECT * from c WHERE c.DELETED != true";
+  console.log(`🐛 [SUPER-DEBUG] -> Ejecutando query: \x1b[33m'${query}'\x1b[0m`);
+  const { resources: items } = await container.items.query(query).fetchAll();
+  console.log(`🐛 [SUPER-DEBUG] -> Query completada. Se encontraron \x1b[32m${items.length}\x1b[0m precios.`);
+  console.log("\x1b[35m======= FIN DEBUG INSANO: GetAllZTPreciosItemsCosmos =======\x1b[0m\n\n");
+  return items;
+}
+
+async function GetOneZTPreciosItemCosmos(IdPrecioOK) {
+  console.log(`\n\n\x1b[35m======= INICIO DEBUG INSANO: GetOneZTPreciosItemCosmos =======\x1b[0m`);
+  console.log(`🐛 [SUPER-DEBUG] -> Función iniciada con IdPrecioOK: \x1b[33m'${IdPrecioOK}'\x1b[0m`);
+  if (!IdPrecioOK) throw new Error('Falta parámetro IdPrecioOK');
+  const container = await getPreciosItemsCosmosContainer();
+  console.log(`🐛 [SUPER-DEBUG] -> Leyendo item con ID '${IdPrecioOK}' y PartitionKey '${IdPrecioOK}'`);
+  const { resource: item } = await container.item(IdPrecioOK, IdPrecioOK).read();
+  if (!item) {
+    console.error(`\x1b[31m[ERROR]\x1b[0m -> No se encontró el precio con id: ${IdPrecioOK}`);
+    throw new Error('No se encontró el precio');
+  }
+  console.log("🐛 [SUPER-DEBUG] -> Precio encontrado:", JSON.stringify(item, null, 2));
+  console.log("\x1b[35m======= FIN DEBUG INSANO: GetOneZTPreciosItemCosmos =======\x1b[0m\n\n");
+  return item;
+}
+
+async function AddOneZTPreciosItemCosmos(payload, user) {
+  console.log("\n\n\x1b[35m======= INICIO DEBUG INSANO: AddOneZTPreciosItemCosmos =======\x1b[0m");
+  console.log("   -> Payload recibido:", JSON.stringify(payload, null, 2));
+  console.log(`   -> Usuario: ${user}`);
+  if (!payload) throw new Error('No se recibió payload');
+
+  const required = ['IdPrecioOK', 'IdListaOK', 'SKUID', 'IdPresentaOK', 'Precio'];
+  console.log("🐛 [SUPER-DEBUG] -> Validando campos obligatorios:", required);
+  const missing = required.filter(k => payload[k] === undefined || payload[k] === null || payload[k] === '');
+  if (missing.length) throw new Error(`Faltan campos obligatorios: ${missing.join(', ')}`);
+  console.log("🐛 [SUPER-DEBUG] -> Validación de campos obligatorios: OK");
+
+  const container = await getPreciosItemsCosmosContainer();
+  console.log(`🐛 [SUPER-DEBUG] -> Verificando si ya existe precio con IdPrecioOK: ${payload.IdPrecioOK}`);
+  const { resource: existing } = await container.item(payload.IdPrecioOK, payload.IdPrecioOK).read().catch(() => ({}));
+  if (existing) throw new Error(`Ya existe un precio con el IdPrecioOK: ${payload.IdPrecioOK}`);
+  console.log("🐛 [SUPER-DEBUG] -> Verificación de duplicados: OK, no existe.");
+
+  const newItem = {
+    id: payload.IdPrecioOK,
+    partitionKey: payload.IdPrecioOK,
+    ...payload,
+    ACTIVED: payload.ACTIVED ?? true,
+    DELETED: payload.DELETED ?? false,
+    REGUSER: user,
+    REGDATE: new Date().toISOString(),
+    HISTORY: [{
+      user: user,
+      event: "CREATE",
+      date: new Date().toISOString(),
+      changes: payload
+    }]
+  };
+  console.log("🐛 [SUPER-DEBUG] -> Objeto a crear en Cosmos DB:", JSON.stringify(newItem, null, 2));
+  const { resource: createdItem } = await container.items.create(newItem);
+  console.log("🐛 [SUPER-DEBUG] -> Precio creado exitosamente en Cosmos DB. ID:", createdItem.id);
+  console.log("\x1b[35m======= FIN DEBUG INSANO: AddOneZTPreciosItemCosmos =======\x1b[0m\n\n");
+  return createdItem;
+}
+
+async function UpdateOneZTPreciosItemCosmos(IdPrecioOK, cambios, user) {
+  console.log(`\n\n\x1b[35m======= INICIO DEBUG INSANO: UpdateOneZTPreciosItemCosmos =======\x1b[0m`);
+  console.log(`🐛 [SUPER-DEBUG] -> Función iniciada con IdPrecioOK: \x1b[33m'${IdPrecioOK}'\x1b[0m, User: \x1b[33m'${user}'\x1b[0m`);
+  console.log("   -> Cambios recibidos:", JSON.stringify(cambios, null, 2));
+  if (!IdPrecioOK) throw new Error('Falta parámetro IdPrecioOK');
+  if (!cambios || Object.keys(cambios).length === 0) throw new Error('No se enviaron datos para actualizar');
+
+  const container = await getPreciosItemsCosmosContainer();
+  console.log(`🐛 [SUPER-DEBUG] -> Buscando item actual con id: ${IdPrecioOK}`);
+  const { resource: currentItem } = await container.item(IdPrecioOK, IdPrecioOK).read();
+  if (!currentItem) throw new Error(`No se encontró el precio para actualizar con IdPrecioOK: ${IdPrecioOK}`);
+
+  const updatedItem = {
+    ...currentItem,
+    ...cambios,
+    id: currentItem.id,
+    partitionKey: currentItem.partitionKey,
+    MODUSER: user,
+    MODDATE: new Date().toISOString(),
+    HISTORY: [...(currentItem.HISTORY || []), { user, action: 'UPDATE', date: new Date().toISOString(), changes: cambios }]
+  };
+  console.log("🐛 [SUPER-DEBUG] -> Objeto a reemplazar en Cosmos DB:", JSON.stringify(updatedItem, null, 2));
+  const { resource: replacedItem } = await container.item(currentItem.id, currentItem.partitionKey).replace(updatedItem);
+  console.log("🐛 [SUPER-DEBUG] -> Item reemplazado exitosamente.");
+  console.log("\x1b[35m======= FIN DEBUG INSANO: UpdateOneZTPreciosItemCosmos =======\x1b[0m\n\n");
+  return replacedItem;
+}
+
+async function DeleteLogicZTPreciosItemCosmos(IdPrecioOK, user) {
+  console.log(`\n\n\x1b[35m======= INICIO DEBUG INSANO: DeleteLogicZTPreciosItemCosmos =======\x1b[0m`);
+  console.log(`🐛 [SUPER-DEBUG] -> Función iniciada con IdPrecioOK: \x1b[33m'${IdPrecioOK}'\x1b[0m, User: \x1b[33m'${user}'\x1b[0m`);
+  if (!IdPrecioOK) throw new Error('Falta parámetro IdPrecioOK');
+  const container = await getPreciosItemsCosmosContainer();
+  console.log(`🐛 [SUPER-DEBUG] -> Buscando item actual con id: ${IdPrecioOK}`);
+  const { resource: currentItem } = await container.item(IdPrecioOK, IdPrecioOK).read();
+  if (!currentItem) throw new Error(`No se encontró el precio para borrado lógico con IdPrecioOK: ${IdPrecioOK}`);
+
+  const updatedItem = {
+    ...currentItem,
+    ACTIVED: false,
+    DELETED: true,
+    MODUSER: user,
+    MODDATE: new Date().toISOString(),
+    HISTORY: [...(currentItem.HISTORY || []), { user, action: 'DELETE_LOGIC', date: new Date().toISOString(), changes: { ACTIVED: false, DELETED: true } }]
+  };
+  console.log("🐛 [SUPER-DEBUG] -> Objeto para borrado lógico (reemplazo):", JSON.stringify(updatedItem, null, 2));
+  const { resource: replacedItem } = await container.item(currentItem.id, currentItem.partitionKey).replace(updatedItem);
+  console.log("🐛 [SUPER-DEBUG] -> Borrado lógico exitoso.");
+  console.log("\x1b[35m======= FIN DEBUG INSANO: DeleteLogicZTPreciosItemCosmos =======\x1b[0m\n\n");
+  return replacedItem;
+}
+
+async function DeleteHardZTPreciosItemCosmos(IdPrecioOK) {
+  console.log(`\n\n\x1b[35m======= INICIO DEBUG INSANO: DeleteHardZTPreciosItemCosmos =======\x1b[0m`);
+  console.log(`🐛 [SUPER-DEBUG] -> Función iniciada con IdPrecioOK: \x1b[33m'${IdPrecioOK}'\x1b[0m`);
+  if (!IdPrecioOK) throw new Error('Falta parámetro IdPrecioOK');
+  const container = await getPreciosItemsCosmosContainer();
+  console.log(`🐛 [SUPER-DEBUG] -> Intentando eliminar permanentemente el item con id: ${IdPrecioOK}`);
+  await container.item(IdPrecioOK, IdPrecioOK).delete();
+  console.log("🐛 [SUPER-DEBUG] -> Borrado físico exitoso.");
+  console.log("\x1b[35m======= FIN DEBUG INSANO: DeleteHardZTPreciosItemCosmos =======\x1b[0m\n\n");
+  return { mensaje: 'Precio eliminado permanentemente de Cosmos DB', IdPrecioOK };
+}
+
+async function ActivateOneZTPreciosItemCosmos(IdPrecioOK, user) {
+  console.log(`\n\n\x1b[35m======= INICIO DEBUG INSANO: ActivateOneZTPreciosItemCosmos =======\x1b[0m`);
+  console.log(`🐛 [SUPER-DEBUG] -> Función iniciada con IdPrecioOK: \x1b[33m'${IdPrecioOK}'\x1b[0m, User: \x1b[33m'${user}'\x1b[0m`);
+  if (!IdPrecioOK) throw new Error('Falta parámetro IdPrecioOK');
+  const container = await getPreciosItemsCosmosContainer();
+  console.log(`🐛 [SUPER-DEBUG] -> Buscando item actual con id: ${IdPrecioOK}`);
+  const { resource: currentItem } = await container.item(IdPrecioOK, IdPrecioOK).read();
+  if (!currentItem) throw new Error(`No se encontró el precio para activar con IdPrecioOK: ${IdPrecioOK}`);
+
+  const updatedItem = { ...currentItem, ACTIVED: true, DELETED: false, MODUSER: user, MODDATE: new Date().toISOString(), HISTORY: [...(currentItem.HISTORY || []), { user, action: 'ACTIVATE', date: new Date().toISOString(), changes: { ACTIVED: true, DELETED: false } }] };
+  console.log("🐛 [SUPER-DEBUG] -> Objeto para activación (reemplazo):", JSON.stringify(updatedItem, null, 2));
+  const { resource: replacedItem } = await container.item(currentItem.id, currentItem.partitionKey).replace(updatedItem);
+  console.log("🐛 [SUPER-DEBUG] -> Activación exitosa.");
+  console.log("\x1b[35m======= FIN DEBUG INSANO: ActivateOneZTPreciosItemCosmos =======\x1b[0m\n\n");
+  return replacedItem;
+}
+
+async function GetZTPreciosItemsByIdPresentaOKCosmos(idPresentaOK) {
+  console.log(`\n\n\x1b[35m======= INICIO DEBUG INSANO: GetZTPreciosItemsByIdPresentaOKCosmos =======\x1b[0m`);
+  console.log(`🐛 [SUPER-DEBUG] -> Función iniciada con idPresentaOK: \x1b[33m'${idPresentaOK}'\x1b[0m`);
+  if (!idPresentaOK) throw new Error('Falta parámetro IdPresentaOK');
+  const container = await getPreciosItemsCosmosContainer();
+  const querySpec = { query: "SELECT * FROM c WHERE c.IdPresentaOK = @idPresentaOK AND c.DELETED != true", parameters: [{ name: "@idPresentaOK", value: idPresentaOK }] };
+  console.log("🐛 [SUPER-DEBUG] -> QuerySpec preparado para Cosmos DB:", JSON.stringify(querySpec, null, 2));
+  const { resources: items } = await container.items.query(querySpec).fetchAll();
+  console.log(`🐛 [SUPER-DEBUG] -> Query ejecutada. Se encontraron \x1b[32m${items.length}\x1b[0m items.`);
+  console.log("\x1b[35m======= FIN DEBUG INSANO: GetZTPreciosItemsByIdPresentaOKCosmos =======\x1b[0m\n\n");
+  return items;
+}
+
+// ============================================
 // MÉTODOS con BITÁCORA (estilo amigo)
 // ============================================
 async function GetAllMethod(bitacora, req, params, paramString, body, dbServer) {
@@ -113,8 +298,12 @@ async function GetAllMethod(bitacora, req, params, paramString, body, dbServer) 
   try {
     let docs;
     switch (dbServer) {
-      case 'MongoDB': docs = await GetAllZTPreciosItems(); break;
-      case 'HANA': throw new Error('HANA no implementado aún para GetAll');
+      case 'MongoDB': 
+        docs = await GetAllZTPreciosItems(); 
+        break;
+      case 'CosmosDB':
+        docs = await GetAllZTPreciosItemsCosmos();
+        break;
       default: throw new Error(`DBServer no soportado: ${dbServer}`);
     }
 
@@ -153,8 +342,12 @@ async function GetOneMethod(bitacora, params, IdPrecioOK, dbServer) {
   try {
     let doc;
     switch (dbServer) {
-      case 'MongoDB': doc = await GetOneZTPreciosItem(IdPrecioOK); break;
-      case 'HANA': throw new Error('HANA no implementado aún para GetOne');
+      case 'MongoDB': 
+        doc = await GetOneZTPreciosItem(IdPrecioOK); 
+        break;
+      case 'CosmosDB':
+        doc = await GetOneZTPreciosItemCosmos(IdPrecioOK);
+        break;
       default: throw new Error(`DBServer no soportado: ${dbServer}`);
     }
 
@@ -192,9 +385,13 @@ async function AddOneMethod(bitacora, params, body, req, dbServer) {
   try {
     let result;
     switch (dbServer) {
-      case 'MongoDB': result = await AddOneZTPreciosItem(getPayload(req), params.LoggedUser); break;
-      case 'HANA': throw new Error('HANA no implementado aún para AddOne');
-      default: throw new Error('DBServer no soportado: ${dbServer}');
+      case 'MongoDB': 
+        result = await AddOneZTPreciosItem(getPayload(req), params.LoggedUser); 
+        break;
+      case 'CosmosDB':
+        result = await AddOneZTPreciosItemCosmos(getPayload(req), params.LoggedUser);
+        break;
+      default: throw new Error(`DBServer no soportado: ${dbServer}`);
     }
 
     data.dataRes = result;
@@ -240,9 +437,13 @@ async function UpdateOneMethod(bitacora, params, IdPrecioOK, req, user, dbServer
   try {
     let result;
     switch (dbServer) {
-      case 'MongoDB': result = await UpdateOneZTPreciosItem(IdPrecioOK, getPayload(req), user); break;
-      case 'HANA': throw new Error('HANA no implementado aún para UpdateOne');
-      default: throw new Error('DBServer no soportado: ${dbServer}');
+      case 'MongoDB': 
+        result = await UpdateOneZTPreciosItem(IdPrecioOK, getPayload(req), user); 
+        break;
+      case 'CosmosDB':
+        result = await UpdateOneZTPreciosItemCosmos(IdPrecioOK, getPayload(req), user);
+        break;
+      default: throw new Error(`DBServer no soportado: ${dbServer}`);
     }
 
     data.dataRes = result;
@@ -279,9 +480,13 @@ async function DeleteLogicMethod(bitacora, params, IdPrecioOK, user, dbServer) {
   try {
     let result;
     switch (dbServer) {
-      case 'MongoDB': result = await DeleteLogicZTPreciosItem(IdPrecioOK, user); break;
-      case 'HANA': throw new Error('HANA no implementado aún para DeleteLogic');
-      default: throw new Error('DBServer no soportado: ${dbServer}');
+      case 'MongoDB': 
+        result = await DeleteLogicZTPreciosItem(IdPrecioOK, user); 
+        break;
+      case 'CosmosDB':
+        result = await DeleteLogicZTPreciosItemCosmos(IdPrecioOK, user);
+        break;
+      default: throw new Error(`DBServer no soportado: ${dbServer}`);
     }
 
     data.dataRes = result;
@@ -324,9 +529,13 @@ async function DeleteHardMethod(bitacora, params, IdPrecioOK, dbServer) {
   try {
     let result;
     switch (dbServer) {
-      case 'MongoDB': result = await DeleteHardZTPreciosItem(IdPrecioOK); break;
-      case 'HANA': throw new Error('HANA no implementado aún para DeleteHard');
-      default: throw new Error('DBServer no soportado: ${dbServer}');
+      case 'MongoDB': 
+        result = await DeleteHardZTPreciosItem(IdPrecioOK); 
+        break;
+      case 'CosmosDB':
+        result = await DeleteHardZTPreciosItemCosmos(IdPrecioOK);
+        break;
+      default: throw new Error(`DBServer no soportado: ${dbServer}`);
     }
 
     data.dataRes = result;
@@ -363,9 +572,13 @@ async function ActivateOneMethod(bitacora, params, IdPrecioOK, user, dbServer) {
   try {
     let result;
     switch (dbServer) {
-      case 'MongoDB': result = await ActivateOneZTPreciosItem(IdPrecioOK, user); break;
-      case 'HANA': throw new Error('HANA no implementado aún para ActivateOne');
-      default: throw new Error('DBServer no soportado: ${dbServer}');
+      case 'MongoDB': 
+        result = await ActivateOneZTPreciosItem(IdPrecioOK, user); 
+        break;
+      case 'CosmosDB':
+        result = await ActivateOneZTPreciosItemCosmos(IdPrecioOK, user);
+        break;
+      default: throw new Error(`DBServer no soportado: ${dbServer}`);
     }
 
     data.dataRes = result;
@@ -407,6 +620,9 @@ async function GetByIdPresentaOKMethod(bitacora, req, params, idPresentaOK, dbSe
       case 'MongoDB':
         items = await GetZTPreciosItemsByIdPresentaOK(idPresentaOK);
         break;
+      case 'CosmosDB':
+        items = await GetZTPreciosItemsByIdPresentaOKCosmos(idPresentaOK);
+        break;
       default:
         throw new Error(`DBServer no soportado: ${dbServer}`);
     }
@@ -434,12 +650,15 @@ async function GetByIdPresentaOKMethod(bitacora, req, params, idPresentaOK, dbSe
 async function ZTPreciosItemsCRUD(req) {
   let bitacora = BITACORA();
   let data = DATA();
+  console.log("\n\n\x1b[35m======= INICIO DEBUG INSANO: ZTPreciosItemsCRUD (Orquestador) =======\x1b[0m");
 
   try {
     const params = req.req?.query || {};
     const body = req.req?.body;
     const paramString = params ? new URLSearchParams(params).toString().trim() : '';
     const { ProcessType, LoggedUser, DBServer, IdPrecioOK, idPresentaOK } = params;
+
+    console.log(`🐛 [SUPER-DEBUG] -> Parámetros recibidos: ${paramString}`);
 
     if (!ProcessType) {
       data.process = 'Validación de parámetros obligatorios';
@@ -467,6 +686,7 @@ async function ZTPreciosItemsCRUD(req) {
     bitacora.api         = '/api/ztproducts-presentaciones/productsPresentacionesCRUD';
     bitacora.server      = process.env.SERVER_NAME || 'No especificado'; // eslint-disable-line
 
+    console.log(`🐛 [SUPER-DEBUG] -> Ejecutando ProcessType: \x1b[33m'${ProcessType}'\x1b[0m en DB: \x1b[33m'${dbServer}'\x1b[0m`);
     switch (ProcessType) {
       case 'GetAll':
         bitacora = await GetAllMethod(bitacora, req, params, paramString, body, dbServer);
@@ -565,10 +785,12 @@ async function ZTPreciosItemsCRUD(req) {
         return FAIL(bitacora);
     }
 
+    console.log(`\x1b[32m[SUCCESS]\x1b[0m -> Operación '${ProcessType}' completada. Devolviendo OK.`);
+    console.log("\x1b[35m======= FIN DEBUG INSANO: ZTPreciosItemsCRUD (Orquestador) =======\x1b[0m\n\n");
     return OK(bitacora);
 
   } catch (error) {
-    if (bitacora.finalRes) {
+    if (!bitacora.finalRes) {
     let data = DATA();
     data.process = 'Catch principal ZTPreciosItemsCRUD';
     data.messageUSR = 'Ocurrió un error inesperado en el endpoint';
@@ -577,6 +799,8 @@ async function ZTPreciosItemsCRUD(req) {
     bitacora = AddMSG(bitacora, data, 'FAIL', 500, true);
     bitacora.finalRes = true;
   }
+  console.error(`\x1b[31m[FATAL ERROR]\x1b[0m -> Capturado en el catch principal de ZTPreciosItemsCRUD:`, error);
+  console.log("\x1b[35m======= FIN DEBUG INSANO: ZTPreciosItemsCRUD (Orquestador) =======\x1b[0m\n\n");
   req.error({
       code: 'Internal-Server-Error',
       status: bitacora.status || 500,
@@ -604,5 +828,14 @@ module.exports = {
   DeleteLogicZTPreciosItem,
   DeleteHardZTPreciosItem,
   ActivateOneZTPreciosItem,
-  GetZTPreciosItemsByIdPresentaOK
+  GetZTPreciosItemsByIdPresentaOK,
+  // Cosmos DB Functions
+  GetAllZTPreciosItemsCosmos,
+  GetOneZTPreciosItemCosmos,
+  AddOneZTPreciosItemCosmos,
+  UpdateOneZTPreciosItemCosmos,
+  DeleteLogicZTPreciosItemCosmos,
+  DeleteHardZTPreciosItemCosmos,
+  ActivateOneZTPreciosItemCosmos,
+  GetZTPreciosItemsByIdPresentaOKCosmos
   };
