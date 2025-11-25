@@ -111,7 +111,7 @@ async function GetZTPreciosItemsByIdPresentaOK(idPresentaOK) {
   return await ZTPrecios_ITEMS.find({ IdPresentaOK: idPresentaOK, DELETED: { $ne: true } }).lean();
 }
 
-// ============================================
+
 // CRUD COSMOS DB
 // ============================================
 async function GetAllZTPreciosItemsCosmos() {
@@ -653,17 +653,31 @@ async function ZTPreciosItemsCRUD(req) {
   console.log("\n\n\x1b[35m======= INICIO DEBUG INSANO: ZTPreciosItemsCRUD (Orquestador) =======\x1b[0m");
 
   try {
-    const params = req.req?.query || {};
-    const body = req.req?.body;
-    const paramString = params ? new URLSearchParams(params).toString().trim() : '';
-    const { ProcessType, LoggedUser, DBServer, IdPrecioOK, idPresentaOK } = params;
+    const params = req.req?.query || {};  // Extraer parámetros de la URL query string
+    const body = req.req?.body;  // Extraer body de la solicitud (para POST)
+    const paramString = params ? new URLSearchParams(params).toString().trim() : '';  // Convertir params a string para logueo
+    
+    // ============================================
+    // 🔹 DESTRUCTURING: Extraer parámetros específicos
+    // ============================================
+    // Esto extrae variables individuales del objeto params
+    // Ejemplo de URL: /api/endpoint?ProcessType=GetByIdListaOK&idListaOK=LISTA-RETAIL&LoggedUser=admin
+    // Resultado: { ProcessType: "GetByIdListaOK", LoggedUser: "admin", idListaOK: "LISTA-RETAIL", ... }
+    const { 
+      ProcessType,      // 📋 Tipo de operación (GetAll, GetOne, AddOne, etc.)
+      LoggedUser,       // 👤 Usuario que hace la solicitud (para auditoría)
+      DBServer,         // 🗄️ Base de datos (MongoDB, HANA, etc.)
+      IdPrecioOK,       // 💰 ID del precio (usado en operaciones de un solo precio)
+      idPresentaOK,     // 📦 ID de presentación (usado en GetByIdPresentaOK)
+      idListaOK         // 📄 ID de lista - NUEVO: Usado en GetByIdListaOK para obtener TODOS los precios de esa lista
+    } = params;
 
     console.log(`🐛 [SUPER-DEBUG] -> Parámetros recibidos: ${paramString}`);
 
     if (!ProcessType) {
       data.process = 'Validación de parámetros obligatorios';
       data.messageUSR = 'Falta parámetro obligatorio: ProcessType';
-      data.messageDEV = 'Valores válidos: GetAll, GetOne, GetByIdPresentaOK, AddOne, UpdateOne, DeleteLogic, DeleteHard, ActivateOne';
+      data.messageDEV = 'Valores válidos: GetAll, GetOne, GetByIdPresentaOK, GetByIdListaOK, AddOne, UpdateOne, DeleteLogic, DeleteHard, ActivateOne';
       bitacora = AddMSG(bitacora, data, 'FAIL', 400, true);
       bitacora.finalRes = true;
       return FAIL(bitacora);
@@ -776,10 +790,11 @@ async function ZTPreciosItemsCRUD(req) {
         if (!bitacora.success) { bitacora.finalRes = true; return FAIL(bitacora); }
         break;
 
+
       default:
         data.process = 'Validación de ProcessType';
         data.messageUSR = 'ProcessType inválido o no especificado';
-        data.messageDEV = 'Debe ser: GetAll, GetOne, GetByIdPresentaOK, AddOne, UpdateOne, DeleteLogic, DeleteHard, ActivateOne';
+        data.messageDEV = 'Debe ser: GetAll, GetOne, GetByIdPresentaOK, GetByIdListaOK, AddOne, UpdateOne, DeleteLogic, DeleteHard, ActivateOne';
         bitacora = AddMSG(bitacora, data, 'FAIL', 400, true);
         bitacora.finalRes = true;
         return FAIL(bitacora);
@@ -816,11 +831,29 @@ async function ZTPreciosItemsCRUD(req) {
 }
 
 // ============================================
-// EXPORTS
+// EXPORTS: Funciones disponibles para importar
 // ============================================
+// Esto hace que las funciones estén disponibles para ser importadas desde otros archivos
+// Ejemplo de uso en otro archivo:
+//   const { GetZTPreciosItemsByIdListaOK } = require('./ztprecios_items-service');
+//   const precios = await GetZTPreciosItemsByIdListaOK('LISTA-RETAIL-2025');
+//
+// Solo exponemos las funciones principales, las internas no se exportan
 module.exports = {
+  // 🎯 Función principal que orquesta todo
   ZTPreciosItemsCRUD,
 
+  // 🔹 Funciones CRUD de base de datos (consultas MongoDB)
+  GetAllZTPreciosItems,              // Obtener todos los precios
+  GetOneZTPreciosItem,               // Obtener un precio específico
+  AddOneZTPreciosItem,               // Crear un nuevo precio
+  UpdateOneZTPreciosItem,            // Actualizar un precio existente
+  DeleteLogicZTPreciosItem,          // Borrado lógico (marcar como eliminado)
+  DeleteHardZTPreciosItem,           // Borrado físico (eliminar permanentemente)
+  ActivateOneZTPreciosItem,          // Activar un precio inactivo
+  
+  // Funciones para obtener por relaciones
+  GetZTPreciosItemsByIdPresentaOK,   // Obtener precios por ID de presentación        
   GetAllZTPreciosItems,
   GetOneZTPreciosItem,
   AddOneZTPreciosItem,
@@ -838,4 +871,5 @@ module.exports = {
   DeleteHardZTPreciosItemCosmos,
   ActivateOneZTPreciosItemCosmos,
   GetZTPreciosItemsByIdPresentaOKCosmos
+
   };
