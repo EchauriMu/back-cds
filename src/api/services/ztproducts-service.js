@@ -27,16 +27,18 @@ function getPayload(req) {
 // ============================================
 // UTIL: OBTENER CONTENEDOR DE COSMOS DB
 // ============================================
-async function getCosmosContainer() {
+async function getCosmosContainer(containerName, partitionKeyPath) {
   const database = getCosmosDatabase();
   if (!database) {
     throw new Error('La conexión con Cosmos DB no está disponible.');
   }
-  // El nombre del contenedor es el mismo que el de la colección de Mongoose
-  const containerName = 'ZTPRODUCTS';
-  const { container } = await database.containers.createIfNotExists({ id: containerName });
+  const { container } = await database.containers.createIfNotExists({ id: containerName, partitionKey: { paths: [partitionKeyPath] } });
   return container;
 }
+
+async function getProductsCosmosContainer() {
+    return getCosmosContainer('ZTPRODUCTS', '/SKUID');
+  }
 
 // ============================================
 // CRUD BÁSICO (MONGO PURO) - Capa 1
@@ -131,14 +133,14 @@ async function ActivateOneZTProduct(skuid, user) {
 // CRUD BÁSICO (COSMOS DB SDK) - Capa 1
 // ============================================
 async function GetAllZTProductsCosmos() {
-  const container = await getCosmosContainer();
+  const container = await getProductsCosmosContainer();
   const { resources: items } = await container.items.query("SELECT * from c").fetchAll();
   return items;
 }
 
 async function GetOneZTProductCosmos(skuid) {
   if (!skuid) throw new Error('Falta parámetro SKUID');
-  const container = await getCosmosContainer();
+  const container = await getProductsCosmosContainer();
   // En Cosmos DB, el 'id' es la clave de partición y el identificador único del ítem.
   // Asumimos que SKUID es el 'id' en Cosmos.
   const { resource: item } = await container.item(skuid, skuid).read();
@@ -153,7 +155,7 @@ async function AddOneZTProductCosmos(payload, user) {
   const missing = required.filter((k) => !payload[k]);
   if (missing.length) throw new Error(`Faltan campos obligatorios: ${missing.join(', ')}`);
 
-  const container = await getCosmosContainer();
+  const container = await getProductsCosmosContainer();
 
   // Verificar duplicados
   const { resource: existing } = await container.item(payload.SKUID, payload.SKUID).read().catch(() => ({}));
@@ -187,7 +189,7 @@ async function UpdateOneZTProductCosmos(req, skuid, user) {
 
   // 1. OBTENER CONTENEDOR (YA SABEMOS QUE ESTÁ PARTICIONADO POR /SKUID)
   // El getCosmosContainer original es suficiente aquí.
-  const container = await getCosmosContainer();
+  const container = await getProductsCosmosContainer();
 
   // 2. BUSCAR EL ITEM (QUERY)
   // Usar query para obtener la versión actual del item y su clave de partición.
@@ -261,7 +263,7 @@ async function UpdateOneZTProductCosmos(req, skuid, user) {
 async function DeleteLogicZTProductCosmos(skuid, user) {
   if (!skuid) throw new Error('Falta parámetro SKUID');
 
-  const container = await getCosmosContainer();
+  const container = await getProductsCosmosContainer();
 
   // Buscar el item activo
   const querySpec = {
@@ -304,7 +306,7 @@ async function DeleteLogicZTProductCosmos(skuid, user) {
 
 async function DeleteHardZTProductCosmos(skuid) {
   if (!skuid) throw new Error('Falta parámetro SKUID');
-  const container = await getCosmosContainer();
+  const container = await getProductsCosmosContainer();
   // Para borrar, necesitamos el id y la clave de partición, que en nuestro caso son ambos el SKUID.
   const { resource: deletedItem } = await container.item(skuid, skuid).delete();
   if (!deletedItem) throw new Error('No se encontró el producto para eliminar permanentemente');
@@ -313,7 +315,7 @@ async function DeleteHardZTProductCosmos(skuid) {
 
 async function ActivateOneZTProductCosmos(skuid, user) {
   if (!skuid) throw new Error('Falta parámetro SKUID');
-  const container = await getCosmosContainer();
+  const container = await getProductsCosmosContainer();
 
   // Buscar el item
   const { resource: currentItem } = await container.item(skuid, skuid).read();

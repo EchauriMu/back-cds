@@ -32,7 +32,7 @@ let cosmosDatabase;
 
 (async () => {
     try {
-        // Asume que configX.DATABASE es el nombre de tu base de datos en Cosmos DB
+     
         const { database } = await cosmosClient.databases.createIfNotExists({ id: configX.DATABASE });
         cosmosDatabase = database; // Almacena la referencia a la base de datos
         console.log(`Secondary DB (CosmosDB NoSQL) is connected to database: ${database.id}`);
