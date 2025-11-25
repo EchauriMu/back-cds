@@ -111,53 +111,36 @@ async function GetZTPreciosItemsByIdPresentaOK(idPresentaOK) {
   return await ZTPrecios_ITEMS.find({ IdPresentaOK: idPresentaOK, DELETED: { $ne: true } }).lean();
 }
 
-
+// ============================================
 // CRUD COSMOS DB
 // ============================================
 async function GetAllZTPreciosItemsCosmos() {
-  console.log("\n\n\x1b[35m======= INICIO DEBUG INSANO: GetAllZTPreciosItemsCosmos =======\x1b[0m");
   const container = await getPreciosItemsCosmosContainer();
   const query = "SELECT * from c WHERE c.DELETED != true";
-  console.log(`🐛 [SUPER-DEBUG] -> Ejecutando query: \x1b[33m'${query}'\x1b[0m`);
   const { resources: items } = await container.items.query(query).fetchAll();
-  console.log(`🐛 [SUPER-DEBUG] -> Query completada. Se encontraron \x1b[32m${items.length}\x1b[0m precios.`);
-  console.log("\x1b[35m======= FIN DEBUG INSANO: GetAllZTPreciosItemsCosmos =======\x1b[0m\n\n");
   return items;
 }
 
 async function GetOneZTPreciosItemCosmos(IdPrecioOK) {
-  console.log(`\n\n\x1b[35m======= INICIO DEBUG INSANO: GetOneZTPreciosItemCosmos =======\x1b[0m`);
-  console.log(`🐛 [SUPER-DEBUG] -> Función iniciada con IdPrecioOK: \x1b[33m'${IdPrecioOK}'\x1b[0m`);
   if (!IdPrecioOK) throw new Error('Falta parámetro IdPrecioOK');
   const container = await getPreciosItemsCosmosContainer();
-  console.log(`🐛 [SUPER-DEBUG] -> Leyendo item con ID '${IdPrecioOK}' y PartitionKey '${IdPrecioOK}'`);
   const { resource: item } = await container.item(IdPrecioOK, IdPrecioOK).read();
   if (!item) {
-    console.error(`\x1b[31m[ERROR]\x1b[0m -> No se encontró el precio con id: ${IdPrecioOK}`);
     throw new Error('No se encontró el precio');
   }
-  console.log("🐛 [SUPER-DEBUG] -> Precio encontrado:", JSON.stringify(item, null, 2));
-  console.log("\x1b[35m======= FIN DEBUG INSANO: GetOneZTPreciosItemCosmos =======\x1b[0m\n\n");
   return item;
 }
 
 async function AddOneZTPreciosItemCosmos(payload, user) {
-  console.log("\n\n\x1b[35m======= INICIO DEBUG INSANO: AddOneZTPreciosItemCosmos =======\x1b[0m");
-  console.log("   -> Payload recibido:", JSON.stringify(payload, null, 2));
-  console.log(`   -> Usuario: ${user}`);
   if (!payload) throw new Error('No se recibió payload');
 
   const required = ['IdPrecioOK', 'IdListaOK', 'SKUID', 'IdPresentaOK', 'Precio'];
-  console.log("🐛 [SUPER-DEBUG] -> Validando campos obligatorios:", required);
   const missing = required.filter(k => payload[k] === undefined || payload[k] === null || payload[k] === '');
   if (missing.length) throw new Error(`Faltan campos obligatorios: ${missing.join(', ')}`);
-  console.log("🐛 [SUPER-DEBUG] -> Validación de campos obligatorios: OK");
 
   const container = await getPreciosItemsCosmosContainer();
-  console.log(`🐛 [SUPER-DEBUG] -> Verificando si ya existe precio con IdPrecioOK: ${payload.IdPrecioOK}`);
   const { resource: existing } = await container.item(payload.IdPrecioOK, payload.IdPrecioOK).read().catch(() => ({}));
   if (existing) throw new Error(`Ya existe un precio con el IdPrecioOK: ${payload.IdPrecioOK}`);
-  console.log("🐛 [SUPER-DEBUG] -> Verificación de duplicados: OK, no existe.");
 
   const newItem = {
     id: payload.IdPrecioOK,
@@ -174,22 +157,15 @@ async function AddOneZTPreciosItemCosmos(payload, user) {
       changes: payload
     }]
   };
-  console.log("🐛 [SUPER-DEBUG] -> Objeto a crear en Cosmos DB:", JSON.stringify(newItem, null, 2));
   const { resource: createdItem } = await container.items.create(newItem);
-  console.log("🐛 [SUPER-DEBUG] -> Precio creado exitosamente en Cosmos DB. ID:", createdItem.id);
-  console.log("\x1b[35m======= FIN DEBUG INSANO: AddOneZTPreciosItemCosmos =======\x1b[0m\n\n");
   return createdItem;
 }
 
 async function UpdateOneZTPreciosItemCosmos(IdPrecioOK, cambios, user) {
-  console.log(`\n\n\x1b[35m======= INICIO DEBUG INSANO: UpdateOneZTPreciosItemCosmos =======\x1b[0m`);
-  console.log(`🐛 [SUPER-DEBUG] -> Función iniciada con IdPrecioOK: \x1b[33m'${IdPrecioOK}'\x1b[0m, User: \x1b[33m'${user}'\x1b[0m`);
-  console.log("   -> Cambios recibidos:", JSON.stringify(cambios, null, 2));
   if (!IdPrecioOK) throw new Error('Falta parámetro IdPrecioOK');
   if (!cambios || Object.keys(cambios).length === 0) throw new Error('No se enviaron datos para actualizar');
 
   const container = await getPreciosItemsCosmosContainer();
-  console.log(`🐛 [SUPER-DEBUG] -> Buscando item actual con id: ${IdPrecioOK}`);
   const { resource: currentItem } = await container.item(IdPrecioOK, IdPrecioOK).read();
   if (!currentItem) throw new Error(`No se encontró el precio para actualizar con IdPrecioOK: ${IdPrecioOK}`);
 
@@ -202,19 +178,13 @@ async function UpdateOneZTPreciosItemCosmos(IdPrecioOK, cambios, user) {
     MODDATE: new Date().toISOString(),
     HISTORY: [...(currentItem.HISTORY || []), { user, action: 'UPDATE', date: new Date().toISOString(), changes: cambios }]
   };
-  console.log("🐛 [SUPER-DEBUG] -> Objeto a reemplazar en Cosmos DB:", JSON.stringify(updatedItem, null, 2));
   const { resource: replacedItem } = await container.item(currentItem.id, currentItem.partitionKey).replace(updatedItem);
-  console.log("🐛 [SUPER-DEBUG] -> Item reemplazado exitosamente.");
-  console.log("\x1b[35m======= FIN DEBUG INSANO: UpdateOneZTPreciosItemCosmos =======\x1b[0m\n\n");
   return replacedItem;
 }
 
 async function DeleteLogicZTPreciosItemCosmos(IdPrecioOK, user) {
-  console.log(`\n\n\x1b[35m======= INICIO DEBUG INSANO: DeleteLogicZTPreciosItemCosmos =======\x1b[0m`);
-  console.log(`🐛 [SUPER-DEBUG] -> Función iniciada con IdPrecioOK: \x1b[33m'${IdPrecioOK}'\x1b[0m, User: \x1b[33m'${user}'\x1b[0m`);
   if (!IdPrecioOK) throw new Error('Falta parámetro IdPrecioOK');
   const container = await getPreciosItemsCosmosContainer();
-  console.log(`🐛 [SUPER-DEBUG] -> Buscando item actual con id: ${IdPrecioOK}`);
   const { resource: currentItem } = await container.item(IdPrecioOK, IdPrecioOK).read();
   if (!currentItem) throw new Error(`No se encontró el precio para borrado lógico con IdPrecioOK: ${IdPrecioOK}`);
 
@@ -226,52 +196,33 @@ async function DeleteLogicZTPreciosItemCosmos(IdPrecioOK, user) {
     MODDATE: new Date().toISOString(),
     HISTORY: [...(currentItem.HISTORY || []), { user, action: 'DELETE_LOGIC', date: new Date().toISOString(), changes: { ACTIVED: false, DELETED: true } }]
   };
-  console.log("🐛 [SUPER-DEBUG] -> Objeto para borrado lógico (reemplazo):", JSON.stringify(updatedItem, null, 2));
   const { resource: replacedItem } = await container.item(currentItem.id, currentItem.partitionKey).replace(updatedItem);
-  console.log("🐛 [SUPER-DEBUG] -> Borrado lógico exitoso.");
-  console.log("\x1b[35m======= FIN DEBUG INSANO: DeleteLogicZTPreciosItemCosmos =======\x1b[0m\n\n");
   return replacedItem;
 }
 
 async function DeleteHardZTPreciosItemCosmos(IdPrecioOK) {
-  console.log(`\n\n\x1b[35m======= INICIO DEBUG INSANO: DeleteHardZTPreciosItemCosmos =======\x1b[0m`);
-  console.log(`🐛 [SUPER-DEBUG] -> Función iniciada con IdPrecioOK: \x1b[33m'${IdPrecioOK}'\x1b[0m`);
   if (!IdPrecioOK) throw new Error('Falta parámetro IdPrecioOK');
   const container = await getPreciosItemsCosmosContainer();
-  console.log(`🐛 [SUPER-DEBUG] -> Intentando eliminar permanentemente el item con id: ${IdPrecioOK}`);
   await container.item(IdPrecioOK, IdPrecioOK).delete();
-  console.log("🐛 [SUPER-DEBUG] -> Borrado físico exitoso.");
-  console.log("\x1b[35m======= FIN DEBUG INSANO: DeleteHardZTPreciosItemCosmos =======\x1b[0m\n\n");
   return { mensaje: 'Precio eliminado permanentemente de Cosmos DB', IdPrecioOK };
 }
 
 async function ActivateOneZTPreciosItemCosmos(IdPrecioOK, user) {
-  console.log(`\n\n\x1b[35m======= INICIO DEBUG INSANO: ActivateOneZTPreciosItemCosmos =======\x1b[0m`);
-  console.log(`🐛 [SUPER-DEBUG] -> Función iniciada con IdPrecioOK: \x1b[33m'${IdPrecioOK}'\x1b[0m, User: \x1b[33m'${user}'\x1b[0m`);
   if (!IdPrecioOK) throw new Error('Falta parámetro IdPrecioOK');
   const container = await getPreciosItemsCosmosContainer();
-  console.log(`🐛 [SUPER-DEBUG] -> Buscando item actual con id: ${IdPrecioOK}`);
   const { resource: currentItem } = await container.item(IdPrecioOK, IdPrecioOK).read();
   if (!currentItem) throw new Error(`No se encontró el precio para activar con IdPrecioOK: ${IdPrecioOK}`);
 
   const updatedItem = { ...currentItem, ACTIVED: true, DELETED: false, MODUSER: user, MODDATE: new Date().toISOString(), HISTORY: [...(currentItem.HISTORY || []), { user, action: 'ACTIVATE', date: new Date().toISOString(), changes: { ACTIVED: true, DELETED: false } }] };
-  console.log("🐛 [SUPER-DEBUG] -> Objeto para activación (reemplazo):", JSON.stringify(updatedItem, null, 2));
   const { resource: replacedItem } = await container.item(currentItem.id, currentItem.partitionKey).replace(updatedItem);
-  console.log("🐛 [SUPER-DEBUG] -> Activación exitosa.");
-  console.log("\x1b[35m======= FIN DEBUG INSANO: ActivateOneZTPreciosItemCosmos =======\x1b[0m\n\n");
   return replacedItem;
 }
 
 async function GetZTPreciosItemsByIdPresentaOKCosmos(idPresentaOK) {
-  console.log(`\n\n\x1b[35m======= INICIO DEBUG INSANO: GetZTPreciosItemsByIdPresentaOKCosmos =======\x1b[0m`);
-  console.log(`🐛 [SUPER-DEBUG] -> Función iniciada con idPresentaOK: \x1b[33m'${idPresentaOK}'\x1b[0m`);
   if (!idPresentaOK) throw new Error('Falta parámetro IdPresentaOK');
   const container = await getPreciosItemsCosmosContainer();
   const querySpec = { query: "SELECT * FROM c WHERE c.IdPresentaOK = @idPresentaOK AND c.DELETED != true", parameters: [{ name: "@idPresentaOK", value: idPresentaOK }] };
-  console.log("🐛 [SUPER-DEBUG] -> QuerySpec preparado para Cosmos DB:", JSON.stringify(querySpec, null, 2));
   const { resources: items } = await container.items.query(querySpec).fetchAll();
-  console.log(`🐛 [SUPER-DEBUG] -> Query ejecutada. Se encontraron \x1b[32m${items.length}\x1b[0m items.`);
-  console.log("\x1b[35m======= FIN DEBUG INSANO: GetZTPreciosItemsByIdPresentaOKCosmos =======\x1b[0m\n\n");
   return items;
 }
 
@@ -650,34 +601,17 @@ async function GetByIdPresentaOKMethod(bitacora, req, params, idPresentaOK, dbSe
 async function ZTPreciosItemsCRUD(req) {
   let bitacora = BITACORA();
   let data = DATA();
-  console.log("\n\n\x1b[35m======= INICIO DEBUG INSANO: ZTPreciosItemsCRUD (Orquestador) =======\x1b[0m");
 
   try {
-    const params = req.req?.query || {};  // Extraer parámetros de la URL query string
-    const body = req.req?.body;  // Extraer body de la solicitud (para POST)
-    const paramString = params ? new URLSearchParams(params).toString().trim() : '';  // Convertir params a string para logueo
-    
-    // ============================================
-    // 🔹 DESTRUCTURING: Extraer parámetros específicos
-    // ============================================
-    // Esto extrae variables individuales del objeto params
-    // Ejemplo de URL: /api/endpoint?ProcessType=GetByIdListaOK&idListaOK=LISTA-RETAIL&LoggedUser=admin
-    // Resultado: { ProcessType: "GetByIdListaOK", LoggedUser: "admin", idListaOK: "LISTA-RETAIL", ... }
-    const { 
-      ProcessType,      // 📋 Tipo de operación (GetAll, GetOne, AddOne, etc.)
-      LoggedUser,       // 👤 Usuario que hace la solicitud (para auditoría)
-      DBServer,         // 🗄️ Base de datos (MongoDB, HANA, etc.)
-      IdPrecioOK,       // 💰 ID del precio (usado en operaciones de un solo precio)
-      idPresentaOK,     // 📦 ID de presentación (usado en GetByIdPresentaOK)
-      idListaOK         // 📄 ID de lista - NUEVO: Usado en GetByIdListaOK para obtener TODOS los precios de esa lista
-    } = params;
-
-    console.log(`🐛 [SUPER-DEBUG] -> Parámetros recibidos: ${paramString}`);
+    const params = req.req?.query || {};
+    const body = req.req?.body;
+    const paramString = params ? new URLSearchParams(params).toString().trim() : '';
+    const { ProcessType, LoggedUser, DBServer, IdPrecioOK, idPresentaOK } = params;
 
     if (!ProcessType) {
       data.process = 'Validación de parámetros obligatorios';
       data.messageUSR = 'Falta parámetro obligatorio: ProcessType';
-      data.messageDEV = 'Valores válidos: GetAll, GetOne, GetByIdPresentaOK, GetByIdListaOK, AddOne, UpdateOne, DeleteLogic, DeleteHard, ActivateOne';
+      data.messageDEV = 'Valores válidos: GetAll, GetOne, GetByIdPresentaOK, AddOne, UpdateOne, DeleteLogic, DeleteHard, ActivateOne';
       bitacora = AddMSG(bitacora, data, 'FAIL', 400, true);
       bitacora.finalRes = true;
       return FAIL(bitacora);
@@ -700,7 +634,6 @@ async function ZTPreciosItemsCRUD(req) {
     bitacora.api         = '/api/ztproducts-presentaciones/productsPresentacionesCRUD';
     bitacora.server      = process.env.SERVER_NAME || 'No especificado'; // eslint-disable-line
 
-    console.log(`🐛 [SUPER-DEBUG] -> Ejecutando ProcessType: \x1b[33m'${ProcessType}'\x1b[0m en DB: \x1b[33m'${dbServer}'\x1b[0m`);
     switch (ProcessType) {
       case 'GetAll':
         bitacora = await GetAllMethod(bitacora, req, params, paramString, body, dbServer);
@@ -790,18 +723,15 @@ async function ZTPreciosItemsCRUD(req) {
         if (!bitacora.success) { bitacora.finalRes = true; return FAIL(bitacora); }
         break;
 
-
       default:
         data.process = 'Validación de ProcessType';
         data.messageUSR = 'ProcessType inválido o no especificado';
-        data.messageDEV = 'Debe ser: GetAll, GetOne, GetByIdPresentaOK, GetByIdListaOK, AddOne, UpdateOne, DeleteLogic, DeleteHard, ActivateOne';
+        data.messageDEV = 'Debe ser: GetAll, GetOne, GetByIdPresentaOK, AddOne, UpdateOne, DeleteLogic, DeleteHard, ActivateOne';
         bitacora = AddMSG(bitacora, data, 'FAIL', 400, true);
         bitacora.finalRes = true;
         return FAIL(bitacora);
     }
 
-    console.log(`\x1b[32m[SUCCESS]\x1b[0m -> Operación '${ProcessType}' completada. Devolviendo OK.`);
-    console.log("\x1b[35m======= FIN DEBUG INSANO: ZTPreciosItemsCRUD (Orquestador) =======\x1b[0m\n\n");
     return OK(bitacora);
 
   } catch (error) {
@@ -814,8 +744,6 @@ async function ZTPreciosItemsCRUD(req) {
     bitacora = AddMSG(bitacora, data, 'FAIL', 500, true);
     bitacora.finalRes = true;
   }
-  console.error(`\x1b[31m[FATAL ERROR]\x1b[0m -> Capturado en el catch principal de ZTPreciosItemsCRUD:`, error);
-  console.log("\x1b[35m======= FIN DEBUG INSANO: ZTPreciosItemsCRUD (Orquestador) =======\x1b[0m\n\n");
   req.error({
       code: 'Internal-Server-Error',
       status: bitacora.status || 500,
@@ -831,29 +759,11 @@ async function ZTPreciosItemsCRUD(req) {
 }
 
 // ============================================
-// EXPORTS: Funciones disponibles para importar
+// EXPORTS
 // ============================================
-// Esto hace que las funciones estén disponibles para ser importadas desde otros archivos
-// Ejemplo de uso en otro archivo:
-//   const { GetZTPreciosItemsByIdListaOK } = require('./ztprecios_items-service');
-//   const precios = await GetZTPreciosItemsByIdListaOK('LISTA-RETAIL-2025');
-//
-// Solo exponemos las funciones principales, las internas no se exportan
 module.exports = {
-  // 🎯 Función principal que orquesta todo
   ZTPreciosItemsCRUD,
 
-  // 🔹 Funciones CRUD de base de datos (consultas MongoDB)
-  GetAllZTPreciosItems,              // Obtener todos los precios
-  GetOneZTPreciosItem,               // Obtener un precio específico
-  AddOneZTPreciosItem,               // Crear un nuevo precio
-  UpdateOneZTPreciosItem,            // Actualizar un precio existente
-  DeleteLogicZTPreciosItem,          // Borrado lógico (marcar como eliminado)
-  DeleteHardZTPreciosItem,           // Borrado físico (eliminar permanentemente)
-  ActivateOneZTPreciosItem,          // Activar un precio inactivo
-  
-  // Funciones para obtener por relaciones
-  GetZTPreciosItemsByIdPresentaOK,   // Obtener precios por ID de presentación        
   GetAllZTPreciosItems,
   GetOneZTPreciosItem,
   AddOneZTPreciosItem,
@@ -871,5 +781,4 @@ module.exports = {
   DeleteHardZTPreciosItemCosmos,
   ActivateOneZTPreciosItemCosmos,
   GetZTPreciosItemsByIdPresentaOKCosmos
-
   };

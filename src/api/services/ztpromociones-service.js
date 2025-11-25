@@ -192,7 +192,7 @@ async function crudZTPromociones(req) {
       default:
         data.process = 'Validación de ProcessType';
         data.messageUSR = 'ProcessType inválido o no especificado';
-        data.messageDEV = 'ProcessType debe ser uno de: GetAll, GetOne, AddOne, UpdateOne, DeleteLogic, DeleteHard, ActivateOne' ;
+        data.messageDEV = 'ProcessType debe ser uno de: GetAll, GetOne, AddOne, UpdateOne, DeleteLogic, DeleteHard, ActivateOne';
         bitacora = AddMSG(bitacora, data, 'FAIL', 400, true);
         bitacora.finalRes = true;
         return FAIL(bitacora);
@@ -304,17 +304,14 @@ async function AddOneZTPromocion(payload, user) {
 }
 
 async function UpdateOneZTPromocion(idPromoOK, payload, user) {
-  console.log('🔧 UpdateOneZTPromocion iniciado con:', { idPromoOK, user, payload });
-  
   if (!idPromoOK) throw new Error('IdPromoOK es requerido');
   if (!user) throw new Error('Usuario requerido para auditoría');
   
-  // Buscar la promoción existente (sin filtrar por DELETED para permitir reactivaciones)
+  // Buscar la promoción existente
   const existingPromo = await ZTPromociones.findOne({ 
-    IdPromoOK: idPromoOK
+    IdPromoOK: idPromoOK, 
+    DELETED: false 
   }).lean();
-  
-  console.log('📋 Promoción existente:', existingPromo ? 'Encontrada' : 'No encontrada');
   
   if (!existingPromo) {
     throw new Error(`No se encontró la promoción con IdPromoOK: ${idPromoOK}`);
@@ -326,8 +323,6 @@ async function UpdateOneZTPromocion(idPromoOK, payload, user) {
     MODUSER: user,
     MODDATE: new Date()
   };
-  
-  console.log('📝 Datos de actualización preparados:', JSON.stringify(updateData, null, 2));
   
   // Si se actualizan las fechas, validar que sean correctas
   if (updateData.FechaIni || updateData.FechaFin) {
@@ -371,7 +366,7 @@ async function UpdateOneZTPromocion(idPromoOK, payload, user) {
     }
   }
   
-  const filter = { IdPromoOK: idPromoOK };
+  const filter = { IdPromoOK: idPromoOK, DELETED: false };
   const promo = await saveWithAudit(ZTPromociones, filter, updateData, user, 'UPDATE');
   
   if (!promo) {
@@ -914,7 +909,6 @@ async function GetConnectionByDbServer(dbServer) {
   switch (dbServer) {
     case 'MongoDB':
       if (mongoose.connection.readyState !== 1) {
-        console.log('[ZTPROMOCIONES] Conectando a MongoDB...');
         await mongoose.connect(process.env.MONGODB_URI);
       }
       return mongoose.connection;

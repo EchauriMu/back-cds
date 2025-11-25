@@ -13,6 +13,7 @@ service ZTProductsService @(path:'/api/ztproducts') {
     action crudProducts(
              id: String,
         ProcessType: String,
+        skuidList: many String, // Acepta el array de SKUs desde el frontend
         PRODUCTNAME: String,
         SKUID: String,
         DESSKU: String,
@@ -26,11 +27,7 @@ service ZTProductsService @(path:'/api/ztproducts') {
         ACTIVED: Boolean,
         DELETED: Boolean,
         partitionKey: String, // Añadimos el campo que faltaba
-        _rid: String,
-        _self: String,
-        _etag: String,
-        _attachments: String,
-        _ts: Integer64
+        
     ) returns array of Products;
     
     

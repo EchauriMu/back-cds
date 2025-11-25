@@ -311,7 +311,6 @@ async function addProductWithPresentations(req) {
     return OK(bitacora);
 
   } catch (error) {
-    console.error("Error catastrófico en addProductWithPresentations:", error);
     data.process = 'Catch principal del servicio';
     data.messageDEV = error.message;
     data.messageUSR = "Ocurrió un error inesperado al procesar su solicitud.";

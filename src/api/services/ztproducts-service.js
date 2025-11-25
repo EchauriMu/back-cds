@@ -130,6 +130,30 @@ async function ActivateOneZTProduct(skuid, user) {
 }
 
 // ============================================
+// CRUD MASIVO (MONGO PURO) - Capa 1
+// ============================================
+async function ActivateManyZTProducts(skuids, user) {
+  if (!skuids || !Array.isArray(skuids) || skuids.length === 0) throw new Error('Se requiere un array de skuids.');
+  const filter = { SKUID: { $in: skuids } };
+  const update = { $set: { ACTIVED: true, DELETED: false, MODUSER: user, MODDATE: new Date() } };
+  // updateMany no dispara hooks, por lo que no se puede usar saveWithAudit directamente.
+  return await ZTProduct.updateMany(filter, update);
+}
+
+async function DeleteLogicManyZTProducts(skuids, user) {
+  if (!skuids || !Array.isArray(skuids) || skuids.length === 0) throw new Error('Se requiere un array de skuids.');
+  const filter = { SKUID: { $in: skuids } };
+  const update = { $set: { ACTIVED: false, DELETED: true, MODUSER: user, MODDATE: new Date() } };
+  return await ZTProduct.updateMany(filter, update);
+}
+
+async function DeleteHardManyZTProducts(skuids) {
+  if (!skuids || !Array.isArray(skuids) || skuids.length === 0) throw new Error('Se requiere un array de skuids.');
+  const filter = { SKUID: { $in: skuids } };
+  return await ZTProduct.deleteMany(filter);
+}
+
+// ============================================
 // CRUD BÁSICO (COSMOS DB SDK) - Capa 1
 // ============================================
 async function GetAllZTProductsCosmos() {
@@ -337,6 +361,56 @@ async function ActivateOneZTProductCosmos(skuid, user) {
     .replace(updatedItem);
   return replacedItem;
 }
+
+// ============================================
+// CRUD MASIVO (COSMOS DB SDK) - Capa 1
+// ============================================
+async function ActivateManyZTProductsCosmos(skuids, user) {
+  if (!skuids || !Array.isArray(skuids) || skuids.length === 0) throw new Error('Se requiere un array de skuids.');
+  const container = await getProductsCosmosContainer();
+  const operations = skuids.map(skuid => ({
+    id: skuid,
+    partitionKey: skuid,
+    operationType: 'Patch',
+    patchOperations: [
+      { op: 'set', path: '/ACTIVED', value: true },
+      { op: 'set', path: '/DELETED', value: false },
+      { op: 'set', path: '/MODUSER', value: user },
+      { op: 'set', path: '/MODDATE', value: new Date().toISOString() }
+    ]
+  }));
+  // Nota: El SDK v3 no tiene un bulkPatch nativo, se ejecutarían en bucle.
+  // Para una verdadera operación masiva, se usaría el BulkExecutor (más complejo) o se aceptan múltiples llamadas.
+  const results = await Promise.all(operations.map(op => container.item(op.id, op.partitionKey).patch(op.patchOperations)));
+  return { modifiedCount: results.length };
+}
+
+async function DeleteLogicManyZTProductsCosmos(skuids, user) {
+  if (!skuids || !Array.isArray(skuids) || skuids.length === 0) throw new Error('Se requiere un array de skuids.');
+  const container = await getProductsCosmosContainer();
+  const operations = skuids.map(skuid => ({
+    id: skuid,
+    partitionKey: skuid,
+    operationType: 'Patch',
+    patchOperations: [
+      { op: 'set', path: '/ACTIVED', value: false },
+      { op: 'set', path: '/DELETED', value: true },
+      { op: 'set', path: '/MODUSER', value: user },
+      { op: 'set', path: '/MODDATE', value: new Date().toISOString() }
+    ]
+  }));
+  const results = await Promise.all(operations.map(op => container.item(op.id, op.partitionKey).patch(op.patchOperations)));
+  return { modifiedCount: results.length };
+}
+
+async function DeleteHardManyZTProductsCosmos(skuids) {
+  if (!skuids || !Array.isArray(skuids) || skuids.length === 0) throw new Error('Se requiere un array de skuids.');
+  const container = await getProductsCosmosContainer();
+  // Ejecutar eliminaciones en paralelo para eficiencia
+  const deletePromises = skuids.map(skuid => container.item(skuid, skuid).delete());
+  const results = await Promise.all(deletePromises);
+  return { deletedCount: results.length };
+}
 //----------------------------------------
 //FIC: CRUD Products Service with Bitacora
 //----------------------------------------
@@ -347,12 +421,16 @@ async function crudZTProducts(req) {
   let data = DATA();
   
   try {
-    // 1. EXTRAER Y SERIALIZAR PARÁMETROS
-    const params = req.req?.query || {};
-    const body = req.req?.body;
-    const paramString = params ? new URLSearchParams(params).toString().trim() : '';
-    const { ProcessType, LoggedUser, DBServer, skuid } = params;
+    // 1. EXTRAER Y SERIALIZAR PARÁMETROS (UNIFICADO PARA GET Y POST)
+    // Para POST, los datos están en req.data o req.req.body. Para GET, en req.req.query.
+    const params = { ...(req.req?.query || {}), ...(req.data || {}), ...(req.req?.body || {}) };
+    const body = getPayload(req); // Usamos el helper para obtener el payload limpio
+    const paramString = new URLSearchParams(params).toString().trim();
+
+    // Extraemos las variables principales desde el objeto unificado 'params'
+    const { ProcessType, LoggedUser, DBServer, skuid, skuidList } = params; // 'skuidList' ahora viene de la definición del .cds
     const dbServer = DBServer || 'MongoDB'; // Default explícito
+
     // 2. VALIDAR PARÁMETROS OBLIGATORIOS
     if (!ProcessType) {
       data.process = 'Validación de parámetros obligatorios';
@@ -484,14 +562,17 @@ async function crudZTProducts(req) {
           bitacora.finalRes = true;
           return FAIL(bitacora);
         }
+
         bitacora = await UpdateProductMethod(
           bitacora,
-          { ...params, paramString, operation: 'activate' }, // Forzar operación de activación
+          { ...params, operation: 'activate' }, // Forzar operación de activación
+          paramString,
           body,
           req,
           LoggedUser,
           dbServer
         );
+
         if (!bitacora.success) {
           bitacora.finalRes = true;
           return FAIL(bitacora);
@@ -499,10 +580,52 @@ async function crudZTProducts(req) {
 
         break;
         
+      case 'ActivateMany': {
+        if (!skuidList || !Array.isArray(skuidList) || skuidList.length === 0) {
+          data.process = 'Validación de parámetros';
+          data.messageUSR = 'Falta el array de SKUs para la operación masiva.';
+          data.messageDEV = 'Se requiere un array "skuidList" en el body para ActivateMany.';
+          bitacora = AddMSG(bitacora, data, 'FAIL', 400, true);
+          bitacora.finalRes = true;
+          return FAIL(bitacora);
+        }
+        bitacora = await ActivateManyMethod(bitacora, params, LoggedUser, dbServer);
+        if (!bitacora.success) { bitacora.finalRes = true; return FAIL(bitacora); }
+        break;
+      }
+
+      case 'DeactivateMany': { // Esto es un borrado lógico masivo
+        if (!skuidList || !Array.isArray(skuidList) || skuidList.length === 0) {
+          data.process = 'Validación de parámetros';
+          data.messageUSR = 'Falta el array de SKUs para la operación masiva.';
+          data.messageDEV = 'Se requiere un array "skuidList" en el body para DeactivateMany.';
+          bitacora = AddMSG(bitacora, data, 'FAIL', 400, true);
+          bitacora.finalRes = true;
+          return FAIL(bitacora);
+        }
+        bitacora = await DeactivateManyMethod(bitacora, params, LoggedUser, dbServer);
+        if (!bitacora.success) { bitacora.finalRes = true; return FAIL(bitacora); }
+        break;
+      }
+
+      case 'DeleteHardMany': {
+        if (!skuidList || !Array.isArray(skuidList) || skuidList.length === 0) {
+          data.process = 'Validación de parámetros';
+          data.messageUSR = 'Falta el array de SKUs para la operación masiva.';
+          data.messageDEV = 'Se requiere un array "skuidList" en el body para DeleteHardMany.';
+          bitacora = AddMSG(bitacora, data, 'FAIL', 400, true);
+          bitacora.finalRes = true;
+          return FAIL(bitacora);
+        }
+        bitacora = await DeleteHardManyMethod(bitacora, params, dbServer);
+        if (!bitacora.success) { bitacora.finalRes = true; return FAIL(bitacora); }
+        break;
+      }
+
       default:
         data.process = 'Validación de ProcessType';
         data.messageUSR = 'ProcessType inválido o no especificado';
-        data.messageDEV = 'ProcessType debe ser uno de: GetAll, GetOne, AddOne, UpdateOne, DeleteLogic, DeleteHard, ActivateOne';
+        data.messageDEV = `ProcessType debe ser uno de: GetAll, GetOne, AddOne, UpdateOne, DeleteLogic, DeleteHard, ActivateOne, ActivateMany, DeactivateMany, DeleteHardMany`;
         bitacora = AddMSG(bitacora, data, 'FAIL', 400, true);
         bitacora.finalRes = true;
         return FAIL(bitacora);
@@ -766,6 +889,7 @@ async function UpdateProductMethod(bitacora, params, paramString, body, req, use
             default:
                 throw new Error(`DBServer no soportado: ${dbServer}`);
         }
+
         data.dataRes = result;
         data.messageUSR = isActivate ? 'Producto activado exitosamente' : 'Producto actualizado exitosamente';
         data.messageDEV = isActivate ? 'ActivateOneZTProduct ejecutado sin errores' : 'UpdateOneZTProduct ejecutado sin errores';
@@ -864,6 +988,135 @@ async function DeleteProductMethod(bitacora, params, skuid, user, dbServer) {
     }
 }
 
+async function ActivateManyMethod(bitacora, params, user, dbServer) {
+  let data = DATA();
+  data.process = 'Activación masiva de productos';
+  data.processType = params.ProcessType;
+  data.loggedUser = user;
+  data.dbServer = dbServer;
+  data.api = '/api/ztproducts/crudProducts';
+
+  bitacora.processType = data.processType;
+  bitacora.loggedUser = data.loggedUser;
+  bitacora.dbServer = dbServer;
+  bitacora.process = data.process;
+
+  try {
+    const skuids = params.skuidList;
+    let result;
+    switch (dbServer) {
+      case 'MongoDB':
+        result = await ActivateManyZTProducts(skuids, user);
+        break;
+      case 'CosmosDB':
+        result = await ActivateManyZTProductsCosmos(skuids, user);
+        break;
+      default:
+        throw new Error(`DBServer no soportado: ${dbServer}`);
+    }
+
+    data.dataRes = result;
+    data.messageUSR = `Operación completada. Productos afectados: ${result.modifiedCount || result.nModified || 0}`;
+    data.messageDEV = 'ActivateMany ejecutado sin errores';
+    bitacora = AddMSG(bitacora, data, 'OK', 200, true);
+    bitacora.success = true;
+    return bitacora;
+
+  } catch (error) {
+    data.messageUSR = 'Error en la activación masiva de productos';
+    data.messageDEV = error.message;
+    bitacora = AddMSG(bitacora, data, 'FAIL', 500, true);
+    bitacora.success = false;
+    return bitacora;
+  }
+}
+
+async function DeactivateManyMethod(bitacora, params, user, dbServer) {
+  let data = DATA();
+  data.process = 'Desactivación (borrado lógico) masiva de productos';
+  data.processType = params.ProcessType;
+  data.loggedUser = user;
+  data.dbServer = dbServer;
+  data.api = '/api/ztproducts/crudProducts';
+
+  bitacora.processType = data.processType;
+  bitacora.loggedUser = data.loggedUser;
+  bitacora.dbServer = dbServer;
+  bitacora.process = data.process;
+
+  try {
+    const skuids = params.skuidList;
+    let result;
+    switch (dbServer) {
+      case 'MongoDB':
+        result = await DeleteLogicManyZTProducts(skuids, user);
+        break;
+      case 'CosmosDB':
+        result = await DeleteLogicManyZTProductsCosmos(skuids, user);
+        break;
+      default:
+        throw new Error(`DBServer no soportado: ${dbServer}`);
+    }
+
+    data.dataRes = result;
+    data.messageUSR = `Operación completada. Productos desactivados: ${result.modifiedCount || result.nModified || 0}`;
+    data.messageDEV = 'DeactivateMany (DeleteLogicMany) ejecutado sin errores';
+    bitacora = AddMSG(bitacora, data, 'OK', 200, true);
+    bitacora.success = true;
+    return bitacora;
+
+  } catch (error) {
+    data.messageUSR = 'Error en la desactivación masiva de productos';
+    data.messageDEV = error.message;
+    bitacora = AddMSG(bitacora, data, 'FAIL', 500, true);
+    bitacora.success = false;
+    return bitacora;
+  }
+}
+
+async function DeleteHardManyMethod(bitacora, params, dbServer) {
+  let data = DATA();
+  data.process = 'Borrado físico masivo de productos';
+  data.processType = params.ProcessType;
+  data.loggedUser = params.LoggedUser;
+  data.dbServer = dbServer;
+  data.api = '/api/ztproducts/crudProducts';
+
+  bitacora.processType = data.processType;
+  bitacora.loggedUser = data.loggedUser;
+  bitacora.dbServer = dbServer;
+  bitacora.process = data.process;
+
+  try {
+    const skuids = params.skuidList;
+    let result;
+    switch (dbServer) {
+      case 'MongoDB':
+        result = await DeleteHardManyZTProducts(skuids);
+        break;
+      case 'CosmosDB':
+        result = await DeleteHardManyZTProductsCosmos(skuids);
+        break;
+      default:
+        throw new Error(`DBServer no soportado: ${dbServer}`);
+    }
+
+    data.dataRes = result;
+    data.messageUSR = `Operación completada. Productos eliminados permanentemente: ${result.deletedCount || 0}`;
+    data.messageDEV = 'DeleteHardMany ejecutado sin errores';
+    bitacora = AddMSG(bitacora, data, 'OK', 200, true);
+    bitacora.success = true;
+    return bitacora;
+
+  } catch (error) {
+    data.messageUSR = 'Error en el borrado físico masivo de productos';
+    data.messageDEV = error.message;
+    bitacora = AddMSG(bitacora, data, 'FAIL', 500, true);
+    bitacora.success = false;
+    return bitacora;
+  }
+}
+
 
 module.exports = {
     crudZTProducts,
@@ -877,5 +1130,11 @@ module.exports = {
     // Cosmos DB Functions
     DeleteLogicZTProductCosmos,
     DeleteHardZTProductCosmos,
-    ActivateOneZTProductCosmos
+    ActivateOneZTProductCosmos,
+    ActivateManyZTProducts,
+    DeleteLogicManyZTProducts,
+    DeleteHardManyZTProducts,
+    ActivateManyZTProductsCosmos,
+    DeleteLogicManyZTProductsCosmos,
+    DeleteHardManyZTProductsCosmos
 };

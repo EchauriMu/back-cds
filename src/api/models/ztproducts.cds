@@ -18,10 +18,4 @@ entity ZTPRODUCTS {
   ACTIVED       : Boolean;
   DELETED       : Boolean;
 
-  // Campos de metadatos de Cosmos DB para evitar errores de validación en CAP
-  _rid          : String;
-  _self         : String;
-  _etag         : String;
-  _attachments  : String;
-  _ts           : Integer64; // 'Integer64' es el tipo correcto para timestamps numéricos en CDS
 }

@@ -372,11 +372,6 @@ async function AddOneMethod(bitacora, params, body, req, dbServer) {
 }
 
 async function UpdateOneMethod(bitacora, params, catid, req, user, dbServer) {
-  console.log('>> Inicia UpdateOneMethod en ztcategorias-service.js');
-  console.log('   - CATID a actualizar:', catid);
-  console.log('   - Payload (cambios):', getPayload(req));
-  console.log('   - Usuario que modifica:', user);
-
   let data = DATA();
   data.process = 'Actualizar categoría';
   data.processType = params.ProcessType || '';

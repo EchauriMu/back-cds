@@ -181,7 +181,6 @@ async function DeleteZTProductFileLogic(fileid, user) {
 }
 
 async function DeleteZTProductFileHard(fileid) {
-  console.log('entrando a DeleteZTProductFileHard')
   if (!fileid) throw new Error('Falta parámetro FILEID');
   const eliminado = await ZTProduct_FILES.findOneAndDelete({ FILEID: fileid });
   if (!eliminado) throw new Error('No se encontró el archivo para eliminar');
