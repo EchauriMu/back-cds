@@ -192,7 +192,7 @@ async function crudZTPromociones(req) {
       default:
         data.process = 'Validación de ProcessType';
         data.messageUSR = 'ProcessType inválido o no especificado';
-        data.messageDEV = 'ProcessType debe ser uno de: GetAll, GetOne, AddOne, UpdateOne, DeleteLogic, DeleteHard, ActivateOne';
+        data.messageDEV = 'ProcessType debe ser uno de: GetAll, GetOne, AddOne, UpdateOne, DeleteLogic, DeleteHard, ActivateOne' ;
         bitacora = AddMSG(bitacora, data, 'FAIL', 400, true);
         bitacora.finalRes = true;
         return FAIL(bitacora);
@@ -309,10 +309,9 @@ async function UpdateOneZTPromocion(idPromoOK, payload, user) {
   if (!idPromoOK) throw new Error('IdPromoOK es requerido');
   if (!user) throw new Error('Usuario requerido para auditoría');
   
-  // Buscar la promoción existente
+  // Buscar la promoción existente (sin filtrar por DELETED para permitir reactivaciones)
   const existingPromo = await ZTPromociones.findOne({ 
-    IdPromoOK: idPromoOK, 
-    DELETED: false 
+    IdPromoOK: idPromoOK
   }).lean();
   
   console.log('📋 Promoción existente:', existingPromo ? 'Encontrada' : 'No encontrada');
@@ -372,7 +371,7 @@ async function UpdateOneZTPromocion(idPromoOK, payload, user) {
     }
   }
   
-  const filter = { IdPromoOK: idPromoOK, DELETED: false };
+  const filter = { IdPromoOK: idPromoOK };
   const promo = await saveWithAudit(ZTPromociones, filter, updateData, user, 'UPDATE');
   
   if (!promo) {
