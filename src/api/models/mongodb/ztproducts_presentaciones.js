@@ -5,7 +5,7 @@ const ModificationSchema = new mongoose.Schema(
     user: { type: String, required: true },
     date: { type: Date, default: Date.now },
     action: { type: String, enum: ["CREATE", "UPDATE", "DELETE"], required: true },
-    changes: { type: Object, default: {} }, // campos que cambiaron (nuevo valor)
+    changes: { type: Object, default: {} },
   },
   { _id: false }
 );
@@ -40,11 +40,6 @@ const ZTPRODUCTS_PRESENTACIONES = new mongoose.Schema(
       default: {},
     },
 
-    // Ya no se usan en la creación, pero se mantienen por si hay datos históricos.
-    // Precio: { type: Number },
-    // Stock: { type: Number },
-
-
     ACTIVED:  { type: Boolean, default: true },
     DELETED:  { type: Boolean, default: false },
 
@@ -76,8 +71,8 @@ ZTPRODUCTS_PRESENTACIONES.pre("save", function (next) {
   if (doc.isNew) {
     doc.HISTORY.push({
       user: doc.REGUSER,        
-      action: "CREATE",
-      changes: doc.toObject(),   
+      action: "CREATE", 
+      changes: doc.toObject(),
     });
   } else {
     

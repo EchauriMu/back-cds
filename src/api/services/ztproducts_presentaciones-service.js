@@ -1,47 +1,31 @@
-// ============================================
-// IMPORTS
-// ============================================
 const { getCosmosDatabase } = require('../../config/connectToMongoDB.config');
 const { ZTProducts_Presentaciones } = require('../models/mongodb/ztproducts_presentaciones');
-const { ZTProduct } = require('../models/mongodb/ztproducts'); // FIC: Necesario para validación de SKUID
+const { ZTProduct } = require('../models/mongodb/ztproducts');
 const { ZTProduct_FILES } = require('../models/mongodb/ztproducts_files');
 const { handleUploadZTProductFileCDS } = require('../../helpers/azureUpload.helper');
 const { OK, FAIL, BITACORA, DATA, AddMSG } = require('../../middlewares/respPWA.handler');
 const { saveWithAudit } = require('../../helpers/audit-timestap');
 
-// ============================================
-// UTIL: OBTENER PAYLOAD DESDE CDS/EXPRESS
-// ============================================
 function getPayload(req) {
-  // Si la acción no tiene parámetros definidos, CAP pone todo el body en req.data
   return req.data || req.req?.body || null;
 }
 
-// ============================================
-// UTIL: OBTENER CONTENEDOR DE COSMOS DB
-// ============================================
 async function getCosmosContainer(containerName, partitionKeyPath) {
   const database = getCosmosDatabase();
   if (!database) {
     throw new Error('La conexión con Cosmos DB no está disponible.');
   }
-  const { container } = await database.containers.createIfNotExists({ 
-    id: containerName, 
-    partitionKey: { paths: [partitionKeyPath] } 
+  const { container } = await database.containers.createIfNotExists({
+    id: containerName,
+    partitionKey: { paths: [partitionKeyPath] }
   });
   return container;
 }
 
-// Helper específico para este servicio
 async function getPresentacionesCosmosContainer() {
   return getCosmosContainer('ZTPRODUCTS_PRESENTACIONES', '/IDPRESENTAOK');
 }
-
-// ============================================
-// CRUD BÁSICO (MONGO PURO)
-// ============================================
 async function GetAllZTProductsPresentaciones() {
-  // por defecto excluimos borrados lógicos
   return await ZTProducts_Presentaciones.find({ DELETED: { $ne: true } }).lean();
 }
 
@@ -68,7 +52,6 @@ async function AddOneZTProductsPresentacion(payload, user) {
   const createdFilesInfo = [];
 
   try {
-    // 1. CREAR LA PRESENTACIÓN
     let propiedades = {};
     if (typeof presentationPayload.PropiedadesExtras === 'string' && presentationPayload.PropiedadesExtras.trim() !== '') {
       try {
@@ -90,7 +73,6 @@ async function AddOneZTProductsPresentacion(payload, user) {
 
     createdPresentation = await saveWithAudit(ZTProducts_Presentaciones, {}, presentationData, user, 'CREATE');
 
-    // 2. SUBIR ARCHIVOS (SI EXISTEN)
     if (files && files.length > 0) {
       for (const file of files) {
         const { fileBase64, originalname, mimetype, ...restOfFile } = file;
@@ -122,26 +104,19 @@ async function AddOneZTProductsPresentacion(payload, user) {
       }
     }
 
-    // 3. RESPUESTA EXITOSA
     return {
       presentation: createdPresentation,
       files: createdFilesInfo,
     };
 
   } catch (error) {
-    // -- INICIO DE ROLLBACK --
-    // Si algo falla, eliminamos todo lo que se creó en esta operación.
     if (createdPresentation) {
       await ZTProducts_Presentaciones.deleteOne({ _id: createdPresentation._id });
     }
     if (createdFilesInfo.length > 0) {
       const fileIdsToDelete = createdFilesInfo.map(f => f.file.FILEID);
       await ZTProduct_FILES.deleteMany({ FILEID: { $in: fileIdsToDelete } });
-      // TODO: En un futuro, se podría añadir la lógica para borrar los archivos de Azure.
     }
-    // -- FIN DE ROLLBACK --
-
-    // Re-lanzar el error para que sea capturado por el método que lo llamó (AddOneMethod)
     throw new Error(`Error en AddOneZTProductsPresentacion: ${error.message}`);
   }
 }
@@ -153,8 +128,6 @@ async function UpdateOneZTProductsPresentacion(idpresentaok, cambios, user) {
 
   const { files, ...presentationChanges } = payload;
 
-  // 1. ACTUALIZAR DATOS DE LA PRESENTACIÓN
-  // Parsear PropiedadesExtras si viene como string
   if (typeof presentationChanges.PropiedadesExtras === 'string' && presentationChanges.PropiedadesExtras.trim() !== '') {
     try {
       presentationChanges.PropiedadesExtras = JSON.parse(presentationChanges.PropiedadesExtras);
@@ -174,29 +147,23 @@ async function UpdateOneZTProductsPresentacion(idpresentaok, cambios, user) {
 
   const processedFiles = [];
 
-  // 2. PROCESAR ARCHIVOS (SI SE ENVIARON)
   if (files && files.length > 0) {
-    // Obtener SKUID de la presentación recién actualizada
     const skuid = updatedPresentation.SKUID;
 
     for (const file of files) {
       const { fileBase64, originalname, mimetype, ...restOfFile } = file;
 
       if (!fileBase64 || !originalname || !mimetype) {
-        console.warn('Se omitió un archivo en la actualización por falta de datos:', file);
-        continue; // Saltar al siguiente archivo
+        continue;
       }
 
-      // Si el archivo que se sube es el principal, borramos el anterior si existe.
       if (restOfFile.PRINCIPAL === true) {
         const oldPrincipal = await ZTProduct_FILES.findOne({ IdPresentaOK: idpresentaok, PRINCIPAL: true });
         if (oldPrincipal) {
           await ZTProduct_FILES.findByIdAndDelete(oldPrincipal._id);
-          // TODO: Añadir lógica para borrar de Azure Blob Storage usando oldPrincipal.URL
         }
       }
 
-      // Subir el nuevo archivo
       const cleanBase64 = fileBase64.replace(/^data:([A-Za-z-+\/]+);base64,/, '').replace(/\r?\n|\r/g, '');
       const fileBuffer = Buffer.from(cleanBase64, 'base64');
       const fileForHelper = {
@@ -213,16 +180,12 @@ async function UpdateOneZTProductsPresentacion(idpresentaok, cambios, user) {
 
       const uploadResult = await handleUploadZTProductFileCDS(fileForHelper, bodyForHelper, user);
 
-      if (uploadResult.error || uploadResult.status >= 400) {
-        // Si la subida falla, al menos la presentación se actualizó. Se podría implementar un rollback más complejo.
-        console.error('Error al subir archivo durante la actualización:', uploadResult.message);
-      } else {
+      if (!(uploadResult.error || uploadResult.status >= 400)) {
         processedFiles.push(uploadResult.data);
       }
     }
   }
 
-  // 3. DEVOLVER LA PRESENTACIÓN ACTUALIZADA Y LOS ARCHIVOS PROCESADOS
   return { presentation: updatedPresentation, files: processedFiles };
 }
 
@@ -249,17 +212,11 @@ async function ActivateOneZTProductsPresentacion(idpresentaok, user) {
   return res;
 }
 
-// ============================================
-// CRUD: GET PRESENTACIONES BY SKUID
-// ============================================
 async function GetZTProductsPresentacionesBySKUID(skuid) {
   if (!skuid) throw new Error('Falta parámetro SKUID');
   return await ZTProducts_Presentaciones.find({ SKUID: skuid, DELETED: { $ne: true } }).lean();
 }
 
-// ============================================
-// CRUD BÁSICO (COSMOS DB SDK)
-// ============================================
 async function GetAllZTProductsPresentacionesCosmos() {
   const container = await getPresentacionesCosmosContainer();
   const query = "SELECT * from c WHERE c.DELETED != true";
@@ -270,8 +227,6 @@ async function GetAllZTProductsPresentacionesCosmos() {
 async function GetOneZTProductsPresentacionCosmos(idpresentaok) {
   if (!idpresentaok) throw new Error('Falta parámetro IdPresentaOK');
   const container = await getPresentacionesCosmosContainer();
-  // Para leer un item, se necesita su ID y su clave de partición.
-  // En este contenedor, ambos son `idpresentaok`.
   const { resource: item } = await container.item(idpresentaok, idpresentaok).read();
   if (!item) {
     throw new Error('No se encontró la presentación');
@@ -291,13 +246,10 @@ async function AddOneZTProductsPresentacionCosmos(payload, user) {
 
   const container = await getPresentacionesCosmosContainer();
 
-  // Verificar si la presentación ya existe
   const { resource: existing } = await container.item(IdPresentaOK, IdPresentaOK).read().catch(() => ({}));
   if (existing) throw new Error(`Ya existe una presentación con el IdPresentaOK: ${IdPresentaOK}`);
 
-  // Verificar si el producto padre (SKUID) existe
   const productContainer = await getCosmosContainer('ZTPRODUCTS', '/SKUID');
-  // Usamos una consulta para verificar la existencia del producto padre.
   const productQuery = { query: "SELECT c.id FROM c WHERE c.id = @skuid", parameters: [{ name: "@skuid", value: SKUID }] };
   const { resources: products } = await productContainer.items.query(productQuery).fetchAll();
   if (products.length === 0) throw new Error(`El producto padre con SKUID '${SKUID}' no existe.`);
@@ -306,7 +258,6 @@ async function AddOneZTProductsPresentacionCosmos(payload, user) {
   const createdFilesInfo = [];
 
   try {
-    // 1. CREAR LA PRESENTACIÓN
     let propiedades = {};
     if (typeof presentationPayload.PropiedadesExtras === 'string' && presentationPayload.PropiedadesExtras.trim() !== '') {
       try {
@@ -318,14 +269,13 @@ async function AddOneZTProductsPresentacionCosmos(payload, user) {
         propiedades = presentationPayload.PropiedadesExtras;
     }
 
-    // Excluir 'files' del objeto que se va a guardar en la BD
     const { files: _files, ...payloadToSave } = presentationPayload;
 
     const newItem = {
       id: IdPresentaOK,
-      partitionKey: IdPresentaOK, // Clave de partición
-      IdPresentaOK: IdPresentaOK, // Campo en mayúsculas para consistencia
-      IDPRESENTAOK: IdPresentaOK, // Campo de la clave de partición, debe estar en mayúsculas.
+      partitionKey: IdPresentaOK,
+      IdPresentaOK: IdPresentaOK,
+      IDPRESENTAOK: IdPresentaOK,
       ...presentationPayload,
       PropiedadesExtras: propiedades,
       ACTIVED: presentationPayload.ACTIVED ?? true,
@@ -336,14 +286,13 @@ async function AddOneZTProductsPresentacionCosmos(payload, user) {
         user: user,
         event: "CREATE",
         date: new Date().toISOString(),
-        changes: payloadToSave // Guardar el payload sin los archivos
+        changes: payloadToSave
       }]
     };
 
     const { resource: createdItem } = await container.items.create(newItem);
     createdPresentation = createdItem;
 
-    // 2. SUBIR ARCHIVOS (SI EXISTEN)
     if (files && files.length > 0) {
       for (const [index, file] of files.entries()) {
         const { fileBase64, originalname, mimetype, ...restOfFile } = file;
@@ -360,18 +309,14 @@ async function AddOneZTProductsPresentacionCosmos(payload, user) {
       }
     }
 
-    // 3. RESPUESTA EXITOSA
     const finalResponse = { presentation: createdPresentation, files: createdFilesInfo };
     return finalResponse;
 
   } catch (error) {
-    // -- INICIO DE ROLLBACK --
     if (createdPresentation) {
       await container.item(createdPresentation.id, createdPresentation.id).delete().catch(() => {});
     }
-    // TODO: Rollback de archivos subidos a Azure.
-    // -- FIN DE ROLLBACK --
-    throw error; // Re-lanzar el error original
+    throw error;
   }
 }
 
@@ -385,7 +330,6 @@ async function UpdateOneZTProductsPresentacionCosmos(idpresentaok, cambios, user
 
   const { files, ...presentationChanges } = cambios;
 
-  // Parsear PropiedadesExtras
   if (typeof presentationChanges.PropiedadesExtras === 'string') {
     try {
       presentationChanges.PropiedadesExtras = JSON.parse(presentationChanges.PropiedadesExtras);
@@ -397,16 +341,15 @@ async function UpdateOneZTProductsPresentacionCosmos(idpresentaok, cambios, user
   const updatedItem = {
     ...currentItem,
     ...presentationChanges,
-    id: currentItem.id, // Asegurar que el id no cambie
-    partitionKey: currentItem.partitionKey, // Asegurar que la partitionKey no cambie
-    MODUSER: user, // Este campo es importante para la auditoría
+    id: currentItem.id,
+    partitionKey: currentItem.partitionKey,
+    MODUSER: user,
     MODDATE: new Date().toISOString(),
     HISTORY: [...(currentItem.HISTORY || []), { user, action: 'UPDATE', date: new Date().toISOString(), changes: presentationChanges }]
   };
 
   const { resource: replacedItem } = await container.item(currentItem.id, currentItem.partitionKey).replace(updatedItem);
 
-  // Lógica para manejar archivos (similar a la versión de Mongo)
   const processedFiles = [];
 
   const finalResponse = { presentation: replacedItem, files: processedFiles };
@@ -475,13 +418,9 @@ async function GetZTProductsPresentacionesBySKUIDCosmos(skuid) {
   return items;
 }
 
-// ============================================
-// MÉTODOS LOCALES CON BITÁCORA (mismo estilo amigo)
-// ============================================
 async function GetAllMethod(bitacora, req, params, paramString, body, dbServer) {
   let data = DATA();
 
-  // contexto
   data.process      = 'Obtener todas las presentaciones';
   data.processType  = params.ProcessType || '';
   data.loggedUser   = params.LoggedUser || '';
@@ -607,12 +546,10 @@ async function AddOneMethod(bitacora, params, req, dbServer) {
     bitacora = AddMSG(bitacora, data, 'OK', 201, true);
     bitacora.success = true;
 
-    // ✅ Setear HTTP 201 + Location desde el service (si hay http.res)
     if (req?.http?.res) {
       req.http.res.status(201);
       const id = (result && (result.IdPresentaOK || result?.data?.IdPresentaOK)) || '';
       if (id) {
-        // Ajusta el entity set si tu ruta difiere (por defecto 'Presentaciones')
         req.http.res.set('Location', `/api/ztproducts-presentaciones/Presentaciones('${id}')`);
       }
     }
@@ -859,20 +796,13 @@ async function GetBySKUIDMethod(bitacora, req, params, skuid, dbServer) {
   }
 }
 
-// ============================================
-// ORQUESTADOR PRINCIPAL (CAP Action)
-//    ProcessType: GetAll | GetOne | AddOne | UpdateOne | DeleteLogic | DeleteHard | ActivateOne
-//    Params esperados: LoggedUser, DBServer (opcional), idpresentaok (para One/Update/Delete/Activate)
-// ============================================
 async function ZTProductsPresentacionesCRUD(req) {
   let bitacora = BITACORA();
   let data = DATA();
 
   try {
-    // 1. PARAMS
-    const params = req.req?.query || {};    
+    const params = req.req?.query || {};
     const paramString = params ? new URLSearchParams(params).toString().trim() : '';
-    // Soportar tanto 'idpresentaok' como 'IdPresentaOK' para mayor flexibilidad.
     const { ProcessType, LoggedUser, DBServer } = params;
     const idpresentaok = params.idpresentaok || params.IdPresentaOK;
 
@@ -894,7 +824,6 @@ async function ZTProductsPresentacionesCRUD(req) {
       return FAIL(bitacora);
     }
 
-    // 3. CONTEXTO BITÁCORA
     const dbServer = DBServer || 'MongoDB';
     bitacora.processType = ProcessType;
     bitacora.loggedUser  = LoggedUser;
@@ -902,9 +831,8 @@ async function ZTProductsPresentacionesCRUD(req) {
     bitacora.queryString = paramString;
     bitacora.method      = req.req?.method || 'UNKNOWN';
     bitacora.api         = '/api/ztproducts-presentaciones/productsPresentacionesCRUD';
-    bitacora.server      = process.env.SERVER_NAME || 'No especificado'; // eslint-disable-line
+    bitacora.server      = process.env.SERVER_NAME || 'No especificado';
 
-    // 4. ROUTING POR PROCESSTYPE
     switch (ProcessType) {
       case 'GetAll': {
         bitacora = await GetAllMethod(bitacora, req, params, paramString, null, dbServer);
@@ -1015,19 +943,16 @@ async function ZTProductsPresentacionesCRUD(req) {
     return OK(bitacora);
 
   } catch (error) {
-    // Si ya venías con finalRes=true, respeta el status consolidado
     if (!bitacora.finalRes) {
-      // Error no manejado -> consolida a 500 y cierra
       let data = DATA();
       data.process     = 'Catch principal ZTProductsPresentacionesCRUD (Error Inesperado)';
       data.messageUSR  = 'Ocurrió un error inesperado en el endpoint';
       data.messageDEV  = error.message;
-      data.stack       = process.env.NODE_ENV === 'development' ? error.stack : undefined; // eslint-disable-line
+      data.stack       = process.env.NODE_ENV === 'development' ? error.stack : undefined;
       bitacora = AddMSG(bitacora, data, 'FAIL', 500, true);
       bitacora.finalRes = true;
     }
 
-    // ✅ Notificar a CAP una única vez con el status final de bitácora
     req.error({
       code: 'Internal-Server-Error',
       status: bitacora.status || 500,
@@ -1041,9 +966,6 @@ async function ZTProductsPresentacionesCRUD(req) {
   }
 }
 
-// ============================================
-// EXPORTS
-// ============================================
 module.exports = {
   ZTProductsPresentacionesCRUD,
   GetAllZTProductsPresentaciones,
@@ -1054,7 +976,6 @@ module.exports = {
   DeleteHardZTProductsPresentacion,
   ActivateOneZTProductsPresentacion,
   GetZTProductsPresentacionesBySKUID,
-  // Cosmos DB Functions
   GetAllZTProductsPresentacionesCosmos,
   GetOneZTProductsPresentacionCosmos,
   AddOneZTProductsPresentacionCosmos,
