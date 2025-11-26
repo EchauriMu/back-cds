@@ -13,6 +13,7 @@ service ZTPromocionesService @(path:'/api/ztpromociones') {
     action crudPromociones(
         ProcessType: String,
         IdPromoOK: String,
+        idsPromoOK: array of String, // Para operaciones bulk (DeleteLogicMany, DeleteHardMany, ActivateMany)
         Titulo: String,
         Descripcion: String,
         FechaIni: String,
