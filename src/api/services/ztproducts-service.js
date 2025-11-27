@@ -1,21 +1,20 @@
-// Servicio para ZTPRODUCTS (productos)
+/**
+ * @author: EchauriMu
+ */
 const mongoose = require('mongoose');
 const ZTProduct = require('../models/mongodb/ztproducts');
 const { getCosmosDatabase } = require('../../config/connectToMongoDB.config');
 
-//FIC: Imports fuctions/methods
 const { OK, FAIL, BITACORA, DATA, AddMSG } = require('../../middlewares/respPWA.handler');
 const { saveWithAudit } = require('../../helpers/audit-timestap');
 
-// ============================================
-// UTIL: OBTENER PAYLOAD DESDE CDS/EXPRESS
-// ============================================
+/** UTIL: OBTENER PAYLOAD DESDE CDS/EXPRESS - EchauriMu */
+//----------------------------------------------------------------
 function getPayload(req) {
   let payload = req.data || req.req?.body || null;
 
-  // Limpiar metadatos de Cosmos DB del payload si existen.
   if (payload) {
-    const cosmosReadOnlyProps = ['_rid', '_self', '_etag', '_attachments', '_ts']; // 'partitionKey' NO se debe eliminar.
+    const cosmosReadOnlyProps = ['_rid', '_self', '_etag', '_attachments', '_ts'];
     const cleanedPayload = { ...payload };
     cosmosReadOnlyProps.forEach(prop => delete cleanedPayload[prop]);
     payload = cleanedPayload;
@@ -24,9 +23,8 @@ function getPayload(req) {
   return payload;
 }
 
-// ============================================
-// UTIL: OBTENER CONTENEDOR DE COSMOS DB
-// ============================================
+/** UTIL: OBTENER CONTENEDOR DE COSMOS DB - EchauriMu */
+//----------------------------------------------------------------
 async function getCosmosContainer(containerName, partitionKeyPath) {
   const database = getCosmosDatabase();
   if (!database) {
@@ -36,18 +34,19 @@ async function getCosmosContainer(containerName, partitionKeyPath) {
   return container;
 }
 
+//----------------------------------------------------------------
 async function getProductsCosmosContainer() {
     return getCosmosContainer('ZTPRODUCTS', '/SKUID');
   }
 
-// ============================================
-// CRUD BÁSICO (MONGO PURO) - Capa 1
-// ============================================
+/** CRUD BÁSICO (MONGO PURO) - Capa 1 - EchauriMu */
+//----------------------------------------------------------------
 async function GetAllZTProducts() {
   
   return await ZTProduct.find({}).lean();
 }
 
+//----------------------------------------------------------------
 async function GetOneZTProduct(skuid) {
   if (!skuid) throw new Error('Falta parámetro SKUID');
   const doc = await ZTProduct.findOne({ SKUID: skuid, ACTIVED: true, DELETED: false }).lean();
@@ -55,6 +54,7 @@ async function GetOneZTProduct(skuid) {
   return doc;
 }
 
+//----------------------------------------------------------------
 async function AddOneZTProduct(payload, user) {
   if (!payload) throw new Error('No se recibió payload. Verifica Content-Type: application/json');
 
@@ -66,7 +66,6 @@ async function AddOneZTProduct(payload, user) {
   const exists = await ZTProduct.findOne({ SKUID: payload.SKUID }).lean();
   if (exists) throw new Error('Ya existe un producto con ese SKUID');
 
-  // Defaults
   const data = {
     SKUID: payload.SKUID,
     PRODUCTNAME: payload.PRODUCTNAME,
@@ -78,19 +77,17 @@ async function AddOneZTProduct(payload, user) {
     INFOAD          : payload.INFOAD || '',
     ACTIVED         : payload.ACTIVED ?? true,
     DELETED         : payload.DELETED ?? false,
-    // Los timestamps son manejados por Mongoose
   };
 
-  // Usa helper con auditoría (CREATE dispara pre('save') y llena HISTORY)
   const created = await saveWithAudit(ZTProduct, {}, data, user, 'CREATE');
   return created;
 }
 
+//----------------------------------------------------------------
 async function UpdateOneZTProduct(skuid, cambios, user) {
   if (!skuid) throw new Error('Falta parámetro SKUID');
   if (!cambios || Object.keys(cambios).length === 0) throw new Error('No se enviaron datos para actualizar');
 
-  // FIC: Parsear CATEGORIAS si viene como un string JSON
   if (cambios.CATEGORIAS && typeof cambios.CATEGORIAS === 'string') {
     try {
       cambios.CATEGORIAS = JSON.parse(cambios.CATEGORIAS);
@@ -101,11 +98,11 @@ async function UpdateOneZTProduct(skuid, cambios, user) {
 
   const filter = { SKUID: skuid };
   const updateData = { ...cambios };
-  // saveWithAudit asigna MODUSER/MODDATE y triggerá pre('save') para HISTORY
   const updated = await saveWithAudit(ZTProduct, filter, updateData, user, 'UPDATE');
   return updated;
 }
 
+//----------------------------------------------------------------
 async function DeleteLogicZTProduct(skuid, user) {
   if (!skuid) throw new Error('Falta parámetro SKUID');
   const filter = { SKUID: skuid, ACTIVED: true, DELETED: false };
@@ -114,6 +111,7 @@ async function DeleteLogicZTProduct(skuid, user) {
   return res;
 }
 
+//----------------------------------------------------------------
 async function DeleteHardZTProduct(skuid) {
   if (!skuid) throw new Error('Falta parámetro SKUID');
   const eliminado = await ZTProduct.findOneAndDelete({ SKUID: skuid });
@@ -121,6 +119,7 @@ async function DeleteHardZTProduct(skuid) {
   return { mensaje: 'Producto eliminado permanentemente', SKUID: skuid };
 }
 
+//----------------------------------------------------------------
 async function ActivateOneZTProduct(skuid, user) {
   if (!skuid) throw new Error('Falta parámetro SKUID');
   const filter = { SKUID: skuid };
@@ -129,17 +128,16 @@ async function ActivateOneZTProduct(skuid, user) {
   return res;
 }
 
-// ============================================
-// CRUD MASIVO (MONGO PURO) - Capa 1
-// ============================================
+/** CRUD MASIVO (MONGO PURO) - Capa 1 - EchauriMu */
+//----------------------------------------------------------------
 async function ActivateManyZTProducts(skuids, user) {
   if (!skuids || !Array.isArray(skuids) || skuids.length === 0) throw new Error('Se requiere un array de skuids.');
   const filter = { SKUID: { $in: skuids } };
   const update = { $set: { ACTIVED: true, DELETED: false, MODUSER: user, MODDATE: new Date() } };
-  // updateMany no dispara hooks, por lo que no se puede usar saveWithAudit directamente.
   return await ZTProduct.updateMany(filter, update);
 }
 
+//----------------------------------------------------------------
 async function DeleteLogicManyZTProducts(skuids, user) {
   if (!skuids || !Array.isArray(skuids) || skuids.length === 0) throw new Error('Se requiere un array de skuids.');
   const filter = { SKUID: { $in: skuids } };
@@ -147,31 +145,31 @@ async function DeleteLogicManyZTProducts(skuids, user) {
   return await ZTProduct.updateMany(filter, update);
 }
 
+//----------------------------------------------------------------
 async function DeleteHardManyZTProducts(skuids) {
   if (!skuids || !Array.isArray(skuids) || skuids.length === 0) throw new Error('Se requiere un array de skuids.');
   const filter = { SKUID: { $in: skuids } };
   return await ZTProduct.deleteMany(filter);
 }
 
-// ============================================
-// CRUD BÁSICO (COSMOS DB SDK) - Capa 1
-// ============================================
+/** CRUD BÁSICO (COSMOS DB SDK) - Capa 1 - EchauriMu */
+//----------------------------------------------------------------
 async function GetAllZTProductsCosmos() {
   const container = await getProductsCosmosContainer();
   const { resources: items } = await container.items.query("SELECT * from c").fetchAll();
   return items;
 }
 
+//----------------------------------------------------------------
 async function GetOneZTProductCosmos(skuid) {
   if (!skuid) throw new Error('Falta parámetro SKUID');
   const container = await getProductsCosmosContainer();
-  // En Cosmos DB, el 'id' es la clave de partición y el identificador único del ítem.
-  // Asumimos que SKUID es el 'id' en Cosmos.
   const { resource: item } = await container.item(skuid, skuid).read();
   if (!item) throw new Error('No se encontró el producto');
   return item;
 }
 
+//----------------------------------------------------------------
 async function AddOneZTProductCosmos(payload, user) {
   if (!payload) throw new Error('No se recibió payload. Verifica Content-Type: application/json');
 
@@ -181,13 +179,12 @@ async function AddOneZTProductCosmos(payload, user) {
 
   const container = await getProductsCosmosContainer();
 
-  // Verificar duplicados
   const { resource: existing } = await container.item(payload.SKUID, payload.SKUID).read().catch(() => ({}));
   if (existing) throw new Error('Ya existe un producto con ese SKUID');
 
   const newItem = {
-    id: payload.SKUID, // 'id' es obligatorio en Cosmos DB, usamos SKUID.
-    partitionKey: payload.SKUID, // ¡IMPORTANTE! Añadir explícitamente la clave de partición.
+    id: payload.SKUID,
+    partitionKey: payload.SKUID,
     ...payload,
     ACTIVED: payload.ACTIVED ?? true,
     DELETED: payload.DELETED ?? false,
@@ -197,7 +194,7 @@ async function AddOneZTProductCosmos(payload, user) {
       event: 'CREATE',
       user: user,
       date: new Date().toISOString(),
-      changes: payload // Corregido: usar 'changes' para consistencia con UPDATE
+      changes: payload
     }]
   };
 
@@ -205,18 +202,15 @@ async function AddOneZTProductCosmos(payload, user) {
   return createdItem;
 }
 
+//----------------------------------------------------------------
 async function UpdateOneZTProductCosmos(req, skuid, user) {
   const cambios = getPayload(req);
 
   if (!skuid) throw new Error('Falta parámetro SKUID');
   if (!cambios || Object.keys(cambios).length === 0) throw new Error('No se enviaron datos para actualizar');
 
-  // 1. OBTENER CONTENEDOR (YA SABEMOS QUE ESTÁ PARTICIONADO POR /SKUID)
-  // El getCosmosContainer original es suficiente aquí.
   const container = await getProductsCosmosContainer();
 
-  // 2. BUSCAR EL ITEM (QUERY)
-  // Usar query para obtener la versión actual del item y su clave de partición.
   const querySpec = {
     query: "SELECT * FROM c WHERE c.id = @skuid",
     parameters: [{ name: "@skuid", value: skuid }]
@@ -228,21 +222,8 @@ async function UpdateOneZTProductCosmos(req, skuid, user) {
   }
   const currentItem = items[0];
 
-  // 3. DETERMINAR LA CLAVE DE PARTICIÓN A USAR EN LA OPERACIÓN DE REEMPLAZO.
-  // ESTA ES LA CLAVE MÁS IMPORTANTE.
-  // Usamos el campo especial de Cosmos DB (/_partitionKey) o la propiedad "partitionKey"
-  // si existe, pero el SDK es inteligente. Para el reemplazo (paso 5), SÓLO necesitamos
-  // el valor actual que tiene el documento en la BD.
-  // Si el documento fue creado con tu lógica, tendrá currentItem.partitionKey.
-  // Si es un documento viejo/mal creado, *podría no tener* la propiedad partitionKey o tenerla mal.
-  // **USAMOS EL VALOR QUE DEBIÓ USARSE EN LA CREACIÓN:**
-  // Si el documento *existe* y el contenedor está particionado por /SKUID,
-  // la clave de partición *siempre* es el SKUID.
-  // Nota: Si es un documento "viejo" sin partición, Cosmos DB usa 'undefined' como clave.
-  // La clave a usar en el `.item()` es el valor de la propiedad que particiona.
-  const currentPartitionKey = currentItem.SKUID; // Usamos SKUID como valor de la partición actual.
+  const currentPartitionKey = currentItem.SKUID;
 
-  // Parseo de CATEGORIAS (Correcto)
   if (cambios.CATEGORIAS && typeof cambios.CATEGORIAS === 'string') {
     try {
       cambios.CATEGORIAS = JSON.parse(cambios.CATEGORIAS);
@@ -251,20 +232,17 @@ async function UpdateOneZTProductCosmos(req, skuid, user) {
     }
   }
 
-  // 4. MEZCLAR CAMBIOS Y ASEGURAR DATOS
   const updatedItem = {
     ...currentItem,
     ...cambios,
-    // **Aseguramos que el ID y el partitionKey se mantengan en el documento a reemplazar**
     id: currentItem.id,
-    SKUID: currentItem.SKUID, // El campo SKUID no cambia
-    partitionKey: currentItem.SKUID, // Aseguramos que el documento FINAL tenga la clave correcta.
+    SKUID: currentItem.SKUID,
+    partitionKey: currentItem.SKUID,
   };
 
   updatedItem.MODUSER = user;
   updatedItem.MODDATE = new Date().toISOString();
 
-  // Lógica de historial (Correcto)
   updatedItem.HISTORY = updatedItem.HISTORY || [];
   updatedItem.HISTORY.push({
     event: 'UPDATE',
@@ -273,23 +251,19 @@ async function UpdateOneZTProductCosmos(req, skuid, user) {
     changes: cambios
   });
 
-  // 5. REEMPLAZAR EL ITEM USANDO SU ID Y SU CLAVE DE PARTICIÓN ACTUAL.
-  // Para que la operación de reemplazo funcione, DEBES usar la clave de partición con la
-  // que el documento *existe actualmente* en la base de datos (que es SKUID si lo creaste bien).
   const { resource: replacedItem } = await container
-    // El primer argumento es el ID. El segundo es la clave de partición *actual* del item.
     .item(currentItem.id, currentPartitionKey)
     .replace(updatedItem);
 
   return replacedItem;
 }
 
+//----------------------------------------------------------------
 async function DeleteLogicZTProductCosmos(skuid, user) {
   if (!skuid) throw new Error('Falta parámetro SKUID');
 
   const container = await getProductsCosmosContainer();
 
-  // Buscar el item activo
   const querySpec = {
     query: "SELECT * FROM c WHERE c.id = @skuid AND c.DELETED = false",
     parameters: [{ name: "@skuid", value: skuid }]
@@ -302,7 +276,6 @@ async function DeleteLogicZTProductCosmos(skuid, user) {
   const currentItem = items[0];
   const currentPartitionKey = currentItem.SKUID;
 
-  // Preparar los cambios para el borrado lógico
   const updatedItem = {
     ...currentItem,
     ACTIVED: false,
@@ -311,7 +284,6 @@ async function DeleteLogicZTProductCosmos(skuid, user) {
     MODDATE: new Date().toISOString(),
   };
 
-  // Añadir al historial
   updatedItem.HISTORY = updatedItem.HISTORY || [];
   updatedItem.HISTORY.push({
     event: 'DELETE_LOGIC',
@@ -320,7 +292,6 @@ async function DeleteLogicZTProductCosmos(skuid, user) {
     changes: { ACTIVED: false, DELETED: true }
   });
 
-  // Reemplazar el item
   const { resource: replacedItem } = await container
     .item(currentItem.id, currentPartitionKey)
     .replace(updatedItem);
@@ -328,24 +299,23 @@ async function DeleteLogicZTProductCosmos(skuid, user) {
   return replacedItem;
 }
 
+//----------------------------------------------------------------
 async function DeleteHardZTProductCosmos(skuid) {
   if (!skuid) throw new Error('Falta parámetro SKUID');
   const container = await getProductsCosmosContainer();
-  // Para borrar, necesitamos el id y la clave de partición, que en nuestro caso son ambos el SKUID.
   const { resource: deletedItem } = await container.item(skuid, skuid).delete();
   if (!deletedItem) throw new Error('No se encontró el producto para eliminar permanentemente');
   return { mensaje: 'Producto eliminado permanentemente de Cosmos DB', SKUID: skuid };
 }
 
+//----------------------------------------------------------------
 async function ActivateOneZTProductCosmos(skuid, user) {
   if (!skuid) throw new Error('Falta parámetro SKUID');
   const container = await getProductsCosmosContainer();
 
-  // Buscar el item
   const { resource: currentItem } = await container.item(skuid, skuid).read();
   if (!currentItem) throw new Error(`No se encontró el producto para activar con SKUID: ${skuid}`);
 
-  // Preparar los cambios para la activación
   const updatedItem = {
     ...currentItem,
     ACTIVED: true,
@@ -355,16 +325,14 @@ async function ActivateOneZTProductCosmos(skuid, user) {
     HISTORY: [...(currentItem.HISTORY || []), { event: 'ACTIVATE', user, date: new Date().toISOString(), changes: { ACTIVED: true, DELETED: false } }]
   };
 
-  // Reemplazar el item
   const { resource: replacedItem } = await container
     .item(currentItem.id, currentItem.SKUID)
     .replace(updatedItem);
   return replacedItem;
 }
 
-// ============================================
-// CRUD MASIVO (COSMOS DB SDK) - Capa 1
-// ============================================
+/** CRUD MASIVO (COSMOS DB SDK) - Capa 1 - EchauriMu */
+//----------------------------------------------------------------
 async function ActivateManyZTProductsCosmos(skuids, user) {
   if (!skuids || !Array.isArray(skuids) || skuids.length === 0) throw new Error('Se requiere un array de skuids.');
   const container = await getProductsCosmosContainer();
@@ -379,12 +347,11 @@ async function ActivateManyZTProductsCosmos(skuids, user) {
       { op: 'set', path: '/MODDATE', value: new Date().toISOString() }
     ]
   }));
-  // Nota: El SDK v3 no tiene un bulkPatch nativo, se ejecutarían en bucle.
-  // Para una verdadera operación masiva, se usaría el BulkExecutor (más complejo) o se aceptan múltiples llamadas.
   const results = await Promise.all(operations.map(op => container.item(op.id, op.partitionKey).patch(op.patchOperations)));
   return { modifiedCount: results.length };
 }
 
+//----------------------------------------------------------------
 async function DeleteLogicManyZTProductsCosmos(skuids, user) {
   if (!skuids || !Array.isArray(skuids) || skuids.length === 0) throw new Error('Se requiere un array de skuids.');
   const container = await getProductsCosmosContainer();
@@ -403,35 +370,30 @@ async function DeleteLogicManyZTProductsCosmos(skuids, user) {
   return { modifiedCount: results.length };
 }
 
+//----------------------------------------------------------------
 async function DeleteHardManyZTProductsCosmos(skuids) {
   if (!skuids || !Array.isArray(skuids) || skuids.length === 0) throw new Error('Se requiere un array de skuids.');
   const container = await getProductsCosmosContainer();
-  // Ejecutar eliminaciones en paralelo para eficiencia
   const deletePromises = skuids.map(skuid => container.item(skuid, skuid).delete());
   const results = await Promise.all(deletePromises);
   return { deletedCount: results.length };
 }
-//----------------------------------------
-//FIC: CRUD Products Service with Bitacora
-//----------------------------------------
-/* EndPoint: localhost:8080/api/ztproducts/crud?ProcessType='GetAll'  */
+
+/** CRUD Products Service with Bitacora - EchauriMu */
+//----------------------------------------------------------------
 async function crudZTProducts(req) {
   
   let bitacora = BITACORA();
   let data = DATA();
   
   try {
-    // 1. EXTRAER Y SERIALIZAR PARÁMETROS (UNIFICADO PARA GET Y POST)
-    // Para POST, los datos están en req.data o req.req.body. Para GET, en req.req.query.
     const params = { ...(req.req?.query || {}), ...(req.data || {}), ...(req.req?.body || {}) };
-    const body = getPayload(req); // Usamos el helper para obtener el payload limpio
+    const body = getPayload(req);
     const paramString = new URLSearchParams(params).toString().trim();
 
-    // Extraemos las variables principales desde el objeto unificado 'params'
-    const { ProcessType, LoggedUser, DBServer, skuid, skuidList } = params; // 'skuidList' ahora viene de la definición del .cds
-    const dbServer = DBServer || 'MongoDB'; // Default explícito
+    const { ProcessType, LoggedUser, DBServer, skuid, skuidList } = params;
+    const dbServer = DBServer || 'MongoDB';
 
-    // 2. VALIDAR PARÁMETROS OBLIGATORIOS
     if (!ProcessType) {
       data.process = 'Validación de parámetros obligatorios';
       data.messageUSR = 'Falta parámetro obligatorio: ProcessType';
@@ -450,16 +412,14 @@ async function crudZTProducts(req) {
       return FAIL(bitacora);
     }
     
-    // 3. CONFIGURAR CONTEXTO DE LA BITÁCORA
     bitacora.processType = ProcessType;
     bitacora.loggedUser = LoggedUser;
     bitacora.dbServer = dbServer;
     bitacora.queryString = paramString;
     bitacora.method = req.req?.method || 'UNKNOWN';
     bitacora.api = '/api/ztproducts/crudProducts';
-    bitacora.server = process.env.SERVER_NAME || 'No especificado'; // eslint-disable-line
+    bitacora.server = process.env.SERVER_NAME || 'No especificado';
 
-    // 4. EJECUTAR OPERACIÓN SEGÚN PROCESSTYPE
     switch (ProcessType) {
       case 'GetAll':
         bitacora = await GetProductMethod(bitacora, params, paramString, body, dbServer);
@@ -519,7 +479,7 @@ async function crudZTProducts(req) {
         }
         bitacora = await DeleteProductMethod(
           bitacora,
-          { ...params, paramString, ProcessType: 'DeleteLogic' }, // Forzar ProcessType
+          { ...params, paramString, ProcessType: 'DeleteLogic' },
           skuid,
           LoggedUser,
           dbServer
@@ -542,7 +502,7 @@ async function crudZTProducts(req) {
         }
         bitacora = await DeleteProductMethod(
           bitacora,
-          { ...params, paramString, ProcessType: 'DeleteHard' }, // Forzar ProcessType
+          { ...params, paramString, ProcessType: 'DeleteHard' },
           skuid,
           LoggedUser,
           dbServer
@@ -565,7 +525,7 @@ async function crudZTProducts(req) {
 
         bitacora = await UpdateProductMethod(
           bitacora,
-          { ...params, operation: 'activate' }, // Forzar operación de activación
+          { ...params, operation: 'activate' },
           paramString,
           body,
           req,
@@ -594,7 +554,7 @@ async function crudZTProducts(req) {
         break;
       }
 
-      case 'DeactivateMany': { // Esto es un borrado lógico masivo
+      case 'DeactivateMany': {
         if (!skuidList || !Array.isArray(skuidList) || skuidList.length === 0) {
           data.process = 'Validación de parámetros';
           data.messageUSR = 'Falta el array de SKUs para la operación masiva.';
@@ -635,20 +595,17 @@ async function crudZTProducts(req) {
     return OK(bitacora);
     
   } catch (error) {
-    // Si el error ya tiene finalRes = true, significa que fue manejado en un método local
     if (bitacora.finalRes) {
       return FAIL(bitacora);
     }
     
-    // Error no manejado - captura inesperada
     data.process = 'Catch principal crudZTProducts';
     data.messageUSR = 'Ocurrió un error inesperado en el endpoint';
     data.messageDEV = error.message;
-    data.stack = process.env.NODE_ENV === 'development' ? error.stack : undefined; // eslint-disable-line
+    data.stack = process.env.NODE_ENV === 'development' ? error.stack : undefined;
     bitacora = AddMSG(bitacora, data, 'FAIL', 500, true);
     bitacora.finalRes = true;
     
-    // NOTIFICACIÓN ESTRUCTURADA A CAP
     if (req?.error) {
       req.error({
         code: 'Internal-Server-Error',
@@ -660,37 +617,28 @@ async function crudZTProducts(req) {
       });
     }
     
-    // TODO: Implementar registro en tabla de errores
-    // await logErrorToDatabase(error, bitacora);
-    
-    // TODO: Implementar notificación de error
-    // await notifyError(bitacora.loggedUser, error);
-    
     return FAIL(bitacora);
   }
 }
 
-//####################################################################################
-//FIC: Methods for each operation with Bitacora - Capa 2
-//####################################################################################
+/** Methods for each operation with Bitacora - Capa 2 - EchauriMu */
+//----------------------------------------------------------------
 
 async function GetProductMethod(bitacora, params, paramString, body, dbServer) {
     let data = DATA();
     
-    // Configurar contexto de data
     data.process = 'Obtener producto(s)';
     data.processType = params.ProcessType || '';
     data.loggedUser = params.LoggedUser || '';
     data.dbServer = dbServer;
-    data.server = process.env.SERVER_NAME || ''; // eslint-disable-line
+    data.server = process.env.SERVER_NAME || '';
     data.api = '/api/ztproducts/crudProducts';
     data.queryString = paramString;
     
-    // Propagar en bitácora
     bitacora.processType = params.ProcessType || '';
     bitacora.loggedUser = params.LoggedUser || '';
     bitacora.dbServer = dbServer;
-    bitacora.server = process.env.SERVER_NAME || ''; // eslint-disable-line
+    bitacora.server = process.env.SERVER_NAME || '';
     bitacora.process = 'Obtener producto(s)';
     
     try {
@@ -759,7 +707,6 @@ async function GetProductMethod(bitacora, params, paramString, body, dbServer) {
         return bitacora;
         
     } catch (error) {
-        // MANEJO ESPECÍFICO DE ERRORES 404 vs 500
         if (error.message.includes('No se encontró') || error.message.includes('no encontrado')) {
             data.messageUSR = 'Producto no encontrado';
             data.messageDEV = error.message;
@@ -769,31 +716,30 @@ async function GetProductMethod(bitacora, params, paramString, body, dbServer) {
             data.messageDEV = error.message;
             bitacora = AddMSG(bitacora, data, 'FAIL', 500, true);
         }
-        data.stack = process.env.NODE_ENV === 'development' ? error.stack : undefined; // eslint-disable-line
+        data.stack = process.env.NODE_ENV === 'development' ? error.stack : undefined;
         bitacora.success = false;
         return bitacora;
     }
 }
 
+//----------------------------------------------------------------
 async function AddProductMethod(bitacora, params, paramString, body, req, dbServer) {
     let data = DATA();
     
-    // Configurar contexto de data
     data.process = 'Agregar producto';
     data.processType = params.ProcessType || '';
     data.loggedUser = params.LoggedUser || '';
     data.dbServer = dbServer;
-    data.server = process.env.SERVER_NAME || ''; // eslint-disable-line
+    data.server = process.env.SERVER_NAME || '';
     data.api = '/api/ztproducts/crudProducts';
     data.method = "POST";
     data.principal = true;
     data.queryString = paramString;
     
-    // Propagar en bitácora
     bitacora.processType = params.ProcessType || '';
     bitacora.loggedUser = params.LoggedUser || '';
     bitacora.dbServer = dbServer;
-    bitacora.server = process.env.SERVER_NAME || ''; // eslint-disable-line
+    bitacora.server = process.env.SERVER_NAME || '';
     bitacora.process = 'Agregar producto';
     bitacora.api = '/api/ztproducts/crudProducts';
     bitacora.queryString = paramString;
@@ -828,7 +774,6 @@ async function AddProductMethod(bitacora, params, paramString, body, req, dbServ
         return bitacora;
         
     } catch (error) {
-        // MANEJO ESPECÍFICO DE ERRORES
         if (error.message.includes('Faltan campos') || error.message.includes('Ya existe')) {
             data.messageUSR = 'Error al crear el producto - datos no válidos';
             data.messageDEV = error.message;
@@ -843,25 +788,24 @@ async function AddProductMethod(bitacora, params, paramString, body, req, dbServ
     }
 }
 
+//----------------------------------------------------------------
 async function UpdateProductMethod(bitacora, params, paramString, body, req, user, dbServer) {
     let data = DATA();
     
-    // Configurar contexto de data
     data.process = 'Actualizar producto';
     data.processType = params.ProcessType || '';
     data.loggedUser = params.LoggedUser || '';
     data.dbServer = dbServer;
-    data.server = process.env.SERVER_NAME || ''; // eslint-disable-line
+    data.server = process.env.SERVER_NAME || '';
     data.api = '/api/ztproducts/crudProducts';
     data.method = "PUT";
     data.principal = true;
     data.queryString = paramString;
     
-    // Propagar en bitácora
     bitacora.processType = params.ProcessType || '';
     bitacora.loggedUser = params.LoggedUser || '';
     bitacora.dbServer = dbServer;
-    bitacora.server = process.env.SERVER_NAME || ''; // eslint-disable-line
+    bitacora.server = process.env.SERVER_NAME || '';
     bitacora.process = 'Actualizar producto';
     bitacora.api = '/api/ztproducts/crudProducts';
     bitacora.queryString = paramString;
@@ -899,7 +843,6 @@ async function UpdateProductMethod(bitacora, params, paramString, body, req, use
         return bitacora;
         
     } catch (error) {
-        // MANEJO ESPECÍFICO DE ERRORES
         if (error.message.includes('No se encontró') || error.message.includes('no encontrado')) {
             data.messageUSR = 'Error al actualizar el producto - producto no encontrado';
             data.messageDEV = error.message;
@@ -918,25 +861,24 @@ async function UpdateProductMethod(bitacora, params, paramString, body, req, use
     }
 }
 
+//----------------------------------------------------------------
 async function DeleteProductMethod(bitacora, params, skuid, user, dbServer) {
     let data = DATA();
     
-    // Configurar contexto de data
     data.process = 'Eliminar producto';
     data.processType = params.ProcessType || '';
     data.loggedUser = params.LoggedUser || '';
     data.dbServer = dbServer;
-    data.server = process.env.SERVER_NAME || ''; // eslint-disable-line
+    data.server = process.env.SERVER_NAME || '';
     data.api = '/api/ztproducts/crudProducts';
     data.method = "DELETE";
     data.principal = true;
     data.queryString = params.paramString || '';
     
-    // Propagar en bitácora
     bitacora.processType = params.ProcessType || '';
     bitacora.loggedUser = params.LoggedUser || '';
     bitacora.dbServer = dbServer;
-    bitacora.server = process.env.SERVER_NAME || ''; // eslint-disable-line
+    bitacora.server = process.env.SERVER_NAME || '';
     bitacora.process = 'Eliminar producto';
     bitacora.api = '/api/ztproducts/crudProducts';
     bitacora.queryString = params.paramString || '';
@@ -949,14 +891,14 @@ async function DeleteProductMethod(bitacora, params, skuid, user, dbServer) {
             case 'MongoDB':
                 if (processType === 'DeleteHard') {
                     result = await DeleteHardZTProduct(skuid);
-                } else { // DeleteLogic
+                } else {
                     result = await DeleteLogicZTProduct(skuid, user);
                 }
                 break;
             case 'CosmosDB':
                 if (processType === 'DeleteHard') {
                     result = await DeleteHardZTProductCosmos(skuid);
-                } else { // DeleteLogic
+                } else {
                     result = await DeleteLogicZTProductCosmos(skuid, user);
                 }
                 break;
@@ -973,7 +915,6 @@ async function DeleteProductMethod(bitacora, params, skuid, user, dbServer) {
         return bitacora;
         
     } catch (error) {
-        // MANEJO ESPECÍFICO DE ERRORES
         if (error.message.includes('No se encontró') || error.message.includes('no encontrado')) {
             data.messageUSR = 'Error al eliminar el producto - producto no encontrado';
             data.messageDEV = error.message;
@@ -988,6 +929,7 @@ async function DeleteProductMethod(bitacora, params, skuid, user, dbServer) {
     }
 }
 
+//----------------------------------------------------------------
 async function ActivateManyMethod(bitacora, params, user, dbServer) {
   let data = DATA();
   data.process = 'Activación masiva de productos';
@@ -1031,6 +973,7 @@ async function ActivateManyMethod(bitacora, params, user, dbServer) {
   }
 }
 
+//----------------------------------------------------------------
 async function DeactivateManyMethod(bitacora, params, user, dbServer) {
   let data = DATA();
   data.process = 'Desactivación (borrado lógico) masiva de productos';
@@ -1074,6 +1017,7 @@ async function DeactivateManyMethod(bitacora, params, user, dbServer) {
   }
 }
 
+//----------------------------------------------------------------
 async function DeleteHardManyMethod(bitacora, params, dbServer) {
   let data = DATA();
   data.process = 'Borrado físico masivo de productos';

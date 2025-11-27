@@ -21,11 +21,8 @@ const configX = require('./dotenvXConfig');
 })();
 
 // --- II. Conexión a Cosmos DB NoSQL (SDK Nativo) ---
-// La cadena de conexión de Cosmos DB ya es la que tienes en el .env
-const endpoint = configX.COSMOS_DB_CONNECTION_STRING.match(/AccountEndpoint=([^;]+)/i)[1];
-const key = configX.COSMOS_DB_CONNECTION_STRING.match(/AccountKey=([^;]+)/i)[1];
-
-const cosmosClient = new CosmosClient({ endpoint, key });
+const cosmosClient = new CosmosClient({ endpoint: configX.COSMOSDB_ENDPOINT, key: configX.COSMOSDB_KEY });
+console.log(`Cosmos DB client configured for endpoint: ${configX.COSMOSDB_ENDPOINT}`);
 
 // --- III. Referencia a la Base de Datos de Cosmos DB ---
 let cosmosDatabase;
@@ -33,7 +30,7 @@ let cosmosDatabase;
 (async () => {
     try {
      
-        const { database } = await cosmosClient.databases.createIfNotExists({ id: configX.DATABASE });
+        const { database } = await cosmosClient.databases.createIfNotExists({ id: configX.COSMOSDB_CONTAINER });
         cosmosDatabase = database; // Almacena la referencia a la base de datos
         console.log(`Secondary DB (CosmosDB NoSQL) is connected to database: ${database.id}`);
     } catch (error) {

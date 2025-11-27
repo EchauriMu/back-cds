@@ -1,22 +1,23 @@
-// ============================================
-// IMPORTS
-// ============================================
+/**
+ * @author: EchauriMu
+ */
+
+/** IMPORTS - EchauriMu */
+//----------------------------------------------------------------
 const { getCosmosDatabase } = require('../../config/connectToMongoDB.config');
 const { ZTProduct_FILES } = require('../models/mongodb/ztproducts_files');
 const { OK, FAIL, BITACORA, DATA, AddMSG } = require('../../middlewares/respPWA.handler');
 const { handleUploadZTProductFileCDS, handleUpdateZTProductFileCDS } = require('../../helpers/azureUpload.helper');
 const { saveWithAudit } = require('../../helpers/audit-timestap');
 
-// ============================================
-// UTIL: OBTENER PAYLOAD DESDE CDS/EXPRESS
-// ============================================
+/** UTIL: OBTENER PAYLOAD DESDE CDS/EXPRESS - EchauriMu */
+//----------------------------------------------------------------
 function getPayload(req) {
   return req.data || null;
 }
 
-// ============================================
-// UTIL: OBTENER CONTENEDOR DE COSMOS DB
-// ============================================
+/** UTIL: OBTENER CONTENEDOR DE COSMOS DB - EchauriMu */
+//----------------------------------------------------------------
 async function getCosmosFilesContainer() {
   const database = getCosmosDatabase();
   if (!database) {
@@ -29,9 +30,8 @@ async function getCosmosFilesContainer() {
 
 
 
-// ============================================
-// HANDLER: UPLOAD DE ARCHIVOS (POST)
-// ============================================
+/** HANDLER: UPLOAD DE ARCHIVOS (POST) - EchauriMu */
+//----------------------------------------------------------------
 async function ZTProductFilesUploadHandler(req, loggedUser) {
   try {
     const payload = getPayload(req);
@@ -40,11 +40,9 @@ async function ZTProductFilesUploadHandler(req, loggedUser) {
     }
     const { fileBase64, SKUID, FILETYPE, originalname, mimetype, ...rest } = payload;
 
-    // Validación de campos requeridos
     if (!fileBase64 || !SKUID || !FILETYPE || !loggedUser) {
       return { error: true, message: 'Faltan campos requeridos: fileBase64, SKUID, FILETYPE, y el usuario logueado (LoggedUser).' };
     }
-    // Convertir Base64 a Buffer
     let fileBuffer;
     try {
       const cleanBase64 = fileBase64.replace(/^data:([A-Za-z-+\/]+);base64,/, '').replace(/\r?\n|\r/g, '');
@@ -53,25 +51,22 @@ async function ZTProductFilesUploadHandler(req, loggedUser) {
       return { error: true, message: 'Archivo base64 inválido', details: err.message };
     }
 
-    // Preparar objeto file para helper
     const file = {
       buffer: fileBuffer,
       originalname: originalname || 'upload.bin',
       mimetype: mimetype || 'application/octet-stream',
     };
 
-    // Subir archivo usando helper de Azure
     const result = await handleUploadZTProductFileCDS(file, { SKUID, FILETYPE, ...rest }, loggedUser);
     return result.data || result;
 
   } catch (error) {
-    return { error: true, message: error.message, stack: process.env.NODE_ENV === 'development' ? error.stack : undefined }; // eslint-disable-line
+    return { error: true, message: error.message, stack: process.env.NODE_ENV === 'development' ? error.stack : undefined };
   }
 }
 
-// ============================================
-// HANDLER: UPDATE DE ARCHIVOS (PUT)
-// ============================================
+/** HANDLER: UPDATE DE ARCHIVOS (PUT) - EchauriMu */
+//----------------------------------------------------------------
 async function ZTProductFilesUpdateHandler(req, fileid, loggedUser) {
   try {
     const payload = getPayload(req);
@@ -97,13 +92,13 @@ async function ZTProductFilesUpdateHandler(req, fileid, loggedUser) {
   }
 }
 
-// ============================================
-// CRUD BÁSICO: GET
-// ============================================
+/** CRUD BÁSICO: GET - EchauriMu */
+//----------------------------------------------------------------
 async function GetAllZTProductFiles() {
   return await ZTProduct_FILES.find().lean();
 }
 
+//----------------------------------------------------------------
 async function GetOneZTProductFile(fileid) {
   if (!fileid) throw new Error('Falta parámetro FILEID');
   const file = await ZTProduct_FILES.findOne({ FILEID: fileid }).lean();
@@ -111,9 +106,8 @@ async function GetOneZTProductFile(fileid) {
   return file;
 }
 
-// ============================================
-// CRUD: GET FILES BY SKUID
-// ============================================
+/** CRUD: GET FILES BY SKUID - EchauriMu */
+//----------------------------------------------------------------
 async function GetZTProductFilesBySKUID(skuid) {
   if (!skuid) throw new Error('Falta parámetro SKUID');
   return await ZTProduct_FILES.find({ SKUID: skuid }).lean();
@@ -121,32 +115,31 @@ async function GetZTProductFilesBySKUID(skuid) {
 
 
 
-// ============================================
-// CRUD: GET FILES BY IdPresentaOK
-// ============================================
+/** CRUD: GET FILES BY IdPresentaOK - EchauriMu */
+//----------------------------------------------------------------
 async function GetZTProductFilesByIdPresentaOK(idPresentaOK) {
   if (!idPresentaOK) throw new Error('Falta parámetro IdPresentaOK');
   return await ZTProduct_FILES.find({ IdPresentaOK: idPresentaOK }).lean();
 }
 
-// ============================================
-// CRUD BÁSICO (COSMOS DB SDK)
-// ============================================
+/** CRUD BÁSICO (COSMOS DB SDK) - EchauriMu */
+//----------------------------------------------------------------
 async function GetAllZTProductFilesCosmos() {
   const container = await getCosmosFilesContainer();
   const { resources: items } = await container.items.query("SELECT * from c WHERE c.DELETED != true").fetchAll();
   return items;
 }
 
+//----------------------------------------------------------------
 async function GetOneZTProductFileCosmos(fileid) {
   if (!fileid) throw new Error('Falta parámetro FILEID');
   const container = await getCosmosFilesContainer();
-  // La clave de partición es FILEID, por lo que se usa fileid para el id y para la clave de partición.
   const { resource: item } = await container.item(fileid, fileid).read();
   if (!item) throw new Error('No se encontró el archivo en Cosmos DB');
   return item;
 }
 
+//----------------------------------------------------------------
 async function GetZTProductFilesBySKUIDCosmos(skuid) {
   if (!skuid) throw new Error('Falta parámetro SKUID');
   const container = await getCosmosFilesContainer();
@@ -158,6 +151,7 @@ async function GetZTProductFilesBySKUIDCosmos(skuid) {
   return items;
 }
 
+//----------------------------------------------------------------
 async function GetZTProductFilesByIdPresentaOKCosmos(idPresentaOK) {
   if (!idPresentaOK) throw new Error('Falta parámetro IdPresentaOK');
   const container = await getCosmosFilesContainer();
@@ -169,9 +163,8 @@ async function GetZTProductFilesByIdPresentaOKCosmos(idPresentaOK) {
   return items;
 }
 
-// ============================================
-// CRUD BÁSICO: DELETE / ACTIVATE
-// ============================================
+/** CRUD BÁSICO: DELETE / ACTIVATE - EchauriMu */
+//----------------------------------------------------------------
 async function DeleteZTProductFileLogic(fileid, user) {
   if (!fileid) throw new Error('Falta parámetro FILEID');
   const filter = { FILEID: fileid };
@@ -180,6 +173,7 @@ async function DeleteZTProductFileLogic(fileid, user) {
   return await saveWithAudit(ZTProduct_FILES, filter, data, user, action);
 }
 
+//----------------------------------------------------------------
 async function DeleteZTProductFileHard(fileid) {
   if (!fileid) throw new Error('Falta parámetro FILEID');
   const eliminado = await ZTProduct_FILES.findOneAndDelete({ FILEID: fileid });
@@ -187,6 +181,7 @@ async function DeleteZTProductFileHard(fileid) {
   return { mensaje: 'Archivo eliminado permanentemente', FILEID: fileid };
 }
 
+//----------------------------------------------------------------
 async function ActivateZTProductFile(fileid, user) {
   if (!fileid) throw new Error('Falta parámetro FILEID');
   const filter = { FILEID: fileid };
@@ -194,21 +189,19 @@ async function ActivateZTProductFile(fileid, user) {
   const action = 'UPDATE';
   return await saveWithAudit(ZTProduct_FILES, filter, data, user, action);
 }
-// ============================================
-// FUNCION PRINCIPAL CRUD
-// ============================================
+
+/** FUNCION PRINCIPAL CRUD - EchauriMu */
+//----------------------------------------------------------------
 async function ZTProductFilesCRUD(req) {
   let bitacora = BITACORA();
   let data = DATA();
   
   try {
-    // 1. EXTRAER Y SERIALIZAR PARÁMETROS
     const params = req.req?.query || {};
     const body = req.req?.body;
     const paramString = params ? new URLSearchParams(params).toString().trim() : '';
     const { ProcessType, LoggedUser, DBServer, fileid, skuid } = params;
     
-    // 2. VALIDAR PARÁMETROS OBLIGATORIOS
     if (!ProcessType) {
       data.process = 'Validación de parámetros obligatorios';
       data.messageUSR = 'Falta parámetro obligatorio: ProcessType';
@@ -227,17 +220,15 @@ async function ZTProductFilesCRUD(req) {
       return FAIL(bitacora);
     }
     
-    // 3. CONFIGURAR CONTEXTO DE LA BITÁCORA
-    const dbServer = DBServer || 'MongoDB'; // Default explícito
+    const dbServer = DBServer || 'MongoDB';
     bitacora.processType = ProcessType;
     bitacora.loggedUser = LoggedUser;
     bitacora.dbServer = dbServer;
     bitacora.queryString = paramString;
     bitacora.method = req.req?.method || 'UNKNOWN';
     bitacora.api = '/api/ztproducts-files/productsFilesCRUD';
-    bitacora.server = process.env.SERVER_NAME || 'No especificado'; // eslint-disable-line
+    bitacora.server = process.env.SERVER_NAME || 'No especificado';
 
-    // 4. EJECUTAR OPERACIÓN SEGÚN PROCESSTYPE
     switch (ProcessType) {
       case 'GetAll':
         bitacora = await GetAllMethod(bitacora, req, params, paramString, body, dbServer);
@@ -377,25 +368,15 @@ async function ZTProductFilesCRUD(req) {
     }
     
     return OK(bitacora);
-    //------utilizar este catch  para el documentos
   }  catch (error) {
-    // 1. Configuración de error NO MANEJADO (solo se ejecuta si el error fue una excepción imprevista)
-    // Si bitacora.finalRes es false, significa que el error no fue procesado por un método interno.
     if (!bitacora.finalRes) {
-        // Error no manejado - lo construimos como 500
         data.process = 'Catch principal ZTProductFilesCRUD (Error Inesperado)';
         data.messageUSR = 'Ocurrió un error inesperado en el endpoint';
         data.messageDEV = error.message;
         
-        // Se añade el mensaje de fallo con status 500 y se marca como finalRes=true
         bitacora = AddMSG(bitacora, data, 'FAIL', 500, true);
     } 
-    // Si bitacora.finalRes ya era true, saltamos el 'if' y usamos la bitácora existente (ej. un 404 de un método interno).
 
-    // 2. Notificación a SAP CAP (ÚNICA LLAMADA)
-    // Usamos la bitácora ya finalizada, ya sea que la construimos en el 'if' o vino de un método.
-    //basado en la logica estandar que nos eneseño el profe
-    //
     req.error({
         code: 'Internal-Server-Error',
         status: bitacora.status || 500, // Usar el status final de la bitácora
@@ -405,20 +386,16 @@ async function ZTProductFilesCRUD(req) {
         innererror: bitacora
     });
 
-    // 3. Devolver la respuesta de fallo y finalizar el flujo
     return FAIL(bitacora);
 }
 
 }
 
-// ============================================
-// MÉTODOS LOCALES CON BITÁCORA
-// ============================================
-
+/** MÉTODOS LOCALES CON BITÁCORA - EchauriMu */
+//----------------------------------------------------------------
 async function GetAllMethod(bitacora, req, params, paramString, body, dbServer) {
   let data = DATA();
   
-  // Configurar contexto de data
   data.process = 'Obtener todos los archivos';
   data.processType = params.ProcessType || '';
   data.loggedUser = params.LoggedUser || '';
@@ -428,15 +405,13 @@ async function GetAllMethod(bitacora, req, params, paramString, body, dbServer) 
   data.api = '/api/ztproducts-files/productsFilesCRUD';
   data.queryString = paramString;
   
-  // Propagar en bitácora
   bitacora.processType = params.ProcessType || '';
   bitacora.loggedUser = params.LoggedUser || '';
   bitacora.dbServer = dbServer;
-  bitacora.server = process.env.SERVER_NAME || ''; // eslint-disable-line
+  bitacora.server = process.env.SERVER_NAME || '';
   bitacora.process = 'Obtener todos los archivos';
   
   try {
-    // Switch según base de datos
     let files;
     switch (dbServer) {
       case 'MongoDB':
@@ -459,17 +434,17 @@ async function GetAllMethod(bitacora, req, params, paramString, body, dbServer) 
   } catch (error) {
     data.messageUSR = 'Error al obtener los archivos';
     data.messageDEV = error.message;
-    data.stack = process.env.NODE_ENV === 'development' ? error.stack : undefined; // eslint-disable-line
+    data.stack = process.env.NODE_ENV === 'development' ? error.stack : undefined;
     bitacora = AddMSG(bitacora, data, 'FAIL', 500, true);
     bitacora.success = false;
     return bitacora;
   }
 }
 
+//----------------------------------------------------------------
 async function GetOneMethod(bitacora, req, params, fileid, dbServer) {
   let data = DATA();
   
-  // Configurar contexto de data
   data.process = 'Obtener un archivo';
   data.processType = params.ProcessType || '';
   data.loggedUser = params.LoggedUser || '';
@@ -478,11 +453,10 @@ async function GetOneMethod(bitacora, req, params, fileid, dbServer) {
   data.method = req.req?.method || 'No Especificado';
   data.api = '/api/ztproducts-files/productsFilesCRUD';
   
-  // Propagar en bitácora
   bitacora.processType = params.ProcessType || '';
   bitacora.loggedUser = params.LoggedUser || '';
   bitacora.dbServer = dbServer;
-  bitacora.server = process.env.SERVER_NAME || ''; // eslint-disable-line
+  bitacora.server = process.env.SERVER_NAME || '';
   bitacora.process = 'Obtener un archivo';
   
   try {
@@ -514,6 +488,7 @@ async function GetOneMethod(bitacora, req, params, fileid, dbServer) {
   }
 }
 
+//----------------------------------------------------------------
 async function AddOneMethod(bitacora, req, params, body, dbServer) {
   let data = DATA();
   
@@ -528,7 +503,7 @@ async function AddOneMethod(bitacora, req, params, body, dbServer) {
   bitacora.processType = params.ProcessType || '';
   bitacora.loggedUser = params.LoggedUser || '';
   bitacora.dbServer = dbServer;
-  bitacora.server = process.env.SERVER_NAME || ''; // eslint-disable-line
+  bitacora.server = process.env.SERVER_NAME || '';
   bitacora.process = 'Agregar archivo';
   
   try {
@@ -559,6 +534,7 @@ async function AddOneMethod(bitacora, req, params, body, dbServer) {
   }
 }
 
+//----------------------------------------------------------------
 async function UpdateOneMethod(bitacora, req, params, fileid, user, dbServer) {
   let data = DATA();
   
@@ -573,7 +549,7 @@ async function UpdateOneMethod(bitacora, req, params, fileid, user, dbServer) {
   bitacora.processType = params.ProcessType || '';
   bitacora.loggedUser = params.LoggedUser || '';
   bitacora.dbServer = dbServer;
-  bitacora.server = process.env.SERVER_NAME || ''; // eslint-disable-line
+  bitacora.server = process.env.SERVER_NAME || '';
   bitacora.process = 'Actualizar archivo';
   
   try {
@@ -604,6 +580,7 @@ async function UpdateOneMethod(bitacora, req, params, fileid, user, dbServer) {
   }
 }
 
+//----------------------------------------------------------------
 async function DeleteLogicMethod(bitacora, req, params, fileid, user, dbServer) {
   let data = DATA();
   
@@ -618,7 +595,7 @@ async function DeleteLogicMethod(bitacora, req, params, fileid, user, dbServer) 
   bitacora.processType = params.ProcessType || '';
   bitacora.loggedUser = params.LoggedUser || '';
   bitacora.dbServer = dbServer;
-  bitacora.server = process.env.SERVER_NAME || ''; // eslint-disable-line
+  bitacora.server = process.env.SERVER_NAME || '';
   bitacora.process = 'Borrado lógico de archivo';
   
   try {
@@ -641,12 +618,11 @@ async function DeleteLogicMethod(bitacora, req, params, fileid, user, dbServer) 
     return bitacora;
     
   } catch (error) {
-    // Si el error es porque no se encontró el archivo, es un 404.
     if (error.message.includes('No se encontró el archivo')) {
       data.messageUSR = 'No se encontró el archivo especificado para borrar.';
       data.messageDEV = error.message;
       bitacora = AddMSG(bitacora, data, 'FAIL', 404, true);
-    } else { // Para cualquier otro error, es un 500.
+    } else {
       data.messageUSR = 'Error al borrar lógicamente el archivo';
       data.messageDEV = error.message;
       bitacora = AddMSG(bitacora, data, 'FAIL', 500, true);
@@ -656,6 +632,7 @@ async function DeleteLogicMethod(bitacora, req, params, fileid, user, dbServer) 
   }
 }
 
+//----------------------------------------------------------------
 async function DeleteHardMethod(bitacora, req, params, fileid, dbServer) {
   let data = DATA();
   
@@ -670,7 +647,7 @@ async function DeleteHardMethod(bitacora, req, params, fileid, dbServer) {
   bitacora.processType = params.ProcessType || '';
   bitacora.loggedUser = params.LoggedUser || '';
   bitacora.dbServer = dbServer;
-  bitacora.server = process.env.SERVER_NAME || ''; // eslint-disable-line
+  bitacora.server = process.env.SERVER_NAME || '';
   bitacora.process = 'Borrado permanente de archivo';
   
   try {
@@ -701,6 +678,7 @@ async function DeleteHardMethod(bitacora, req, params, fileid, dbServer) {
   }
 }
 
+//----------------------------------------------------------------
 async function ActivateOneMethod(bitacora, req, params, fileid, user, dbServer) {
   let data = DATA();
   
@@ -715,7 +693,7 @@ async function ActivateOneMethod(bitacora, req, params, fileid, user, dbServer) 
   bitacora.processType = params.ProcessType || '';
   bitacora.loggedUser = params.LoggedUser || '';
   bitacora.dbServer = dbServer;
-  bitacora.server = process.env.SERVER_NAME || ''; // eslint-disable-line
+  bitacora.server = process.env.SERVER_NAME || '';
   bitacora.process = 'Activar archivo';
   
   try {
@@ -746,6 +724,7 @@ async function ActivateOneMethod(bitacora, req, params, fileid, user, dbServer) 
   }
 }
 
+//----------------------------------------------------------------
 async function GetBySKUIDMethod(bitacora, req, params, skuid, dbServer) {
   let data = DATA();
 
@@ -792,6 +771,7 @@ async function GetBySKUIDMethod(bitacora, req, params, skuid, dbServer) {
   }
 }
 
+//----------------------------------------------------------------
 async function GetByIdPresentaOKMethod(bitacora, req, params, idPresentaOK, dbServer) {
   let data = DATA();
 
@@ -838,9 +818,8 @@ async function GetByIdPresentaOKMethod(bitacora, req, params, idPresentaOK, dbSe
   }
 }
 
-// ============================================
-// EXPORTS
-// ============================================
+/** EXPORTS - EchauriMu */
+//----------------------------------------------------------------
 module.exports = {
   ZTProductFilesCRUD,
   GetAllZTProductFiles,
@@ -850,5 +829,5 @@ module.exports = {
   ActivateZTProductFile,
   ZTProductFilesUploadHandler,
   GetZTProductFilesBySKUID,
-  GetZTProductFilesByIdPresentaOK // <-- Exporta la nueva función
+  GetZTProductFilesByIdPresentaOK
 };
