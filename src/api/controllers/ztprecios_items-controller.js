@@ -14,15 +14,12 @@ class ZTPreciosItemsService extends cds.ApplicationService {
         }
         else if (ProcessType === 'AddOne' && result.success && req.http?.res) {
           req.http.res.status(201);
-
-          // Leer clave primaria
           const idPrecio =
             result?.dataRes?.item?.IdPrecioOK ||
             result?.dataRes?.IdPrecioOK ||
             result?.IdPrecioOK || '';
 
           if (idPrecio) {
-            // Ajusta el entity set si usas otro nombre (p.ej. PreciosItems)
             req.http.res.set('Location', `/api/ztprecios-items/PreciosItems('${idPrecio}')`);
           }
           return req.http.res.send(result);

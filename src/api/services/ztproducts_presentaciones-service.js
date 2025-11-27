@@ -1,9 +1,6 @@
-/**
- * @author: AmirOrozco
- */
-
-/** IMPORTS - AmirOrozco */
-//----------------------------------------------------------------
+// ============================================
+// IMPORTS
+// ============================================
 const { getCosmosDatabase } = require('../../config/connectToMongoDB.config');
 const { ZTProducts_Presentaciones } = require('../models/mongodb/ztproducts_presentaciones');
 const { ZTProduct } = require('../models/mongodb/ztproducts');
@@ -12,14 +9,16 @@ const { handleUploadZTProductFileCDS } = require('../../helpers/azureUpload.help
 const { OK, FAIL, BITACORA, DATA, AddMSG } = require('../../middlewares/respPWA.handler');
 const { saveWithAudit } = require('../../helpers/audit-timestap');
 
-/** UTIL: OBTENER PAYLOAD DESDE CDS/EXPRESS - AmirOrozco */
-//----------------------------------------------------------------
+// ============================================
+// UTIL: OBTENER PAYLOAD DESDE CDS/EXPRESS
+// ============================================
 function getPayload(req) {
   return req.data || req.req?.body || null;
 }
 
-/** UTIL: OBTENER CONTENEDOR DE COSMOS DB - AmirOrozco */
-//----------------------------------------------------------------
+// ============================================
+// UTIL: OBTENER CONTENEDOR DE COSMOS DB
+// ============================================
 async function getCosmosContainer(containerName, partitionKeyPath) {
   const database = getCosmosDatabase();
   if (!database) {
@@ -32,7 +31,7 @@ async function getCosmosContainer(containerName, partitionKeyPath) {
   return container;
 }
 
-//----------------------------------------------------------------
+// Helper específico para este servicio
 async function getPresentacionesCosmosContainer() {
   return getCosmosContainer('ZTPRODUCTS_PRESENTACIONES', '/IDPRESENTAOK');
 }
@@ -40,8 +39,6 @@ async function getPresentacionesCosmosContainer() {
 // ============================================
 // CRUD BÁSICO (MONGO PURO)
 // ============================================
-/** CRUD BÁSICO (MONGO PURO) - AmirOrozco */
-//----------------------------------------------------------------
 async function GetAllZTProductsPresentaciones() {
   return await ZTProducts_Presentaciones.find({ DELETED: { $ne: true } }).lean();
 }
@@ -136,7 +133,9 @@ async function AddOneZTProductsPresentacion(payload, user) {
       const fileIdsToDelete = createdFilesInfo.map(f => f.file.FILEID);
       await ZTProduct_FILES.deleteMany({ FILEID: { $in: fileIdsToDelete } });
     }
+    // -- FIN DE ROLLBACK --
 
+    // Re-lanzar el error para que sea capturado por el método que lo llamó (AddOneMethod)
     throw new Error(`Error en AddOneZTProductsPresentacion: ${error.message}`);
   }
 }
@@ -185,7 +184,6 @@ async function UpdateOneZTProductsPresentacion(idpresentaok, cambios, user) {
         }
       }
 
-      // Subir el nuevo archivo
       const cleanBase64 = fileBase64.replace(/^data:([A-Za-z-+\/]+);base64,/, '').replace(/\r?\n|\r/g, '');
       const fileBuffer = Buffer.from(cleanBase64, 'base64');
       const fileForHelper = {
@@ -203,6 +201,8 @@ async function UpdateOneZTProductsPresentacion(idpresentaok, cambios, user) {
       const uploadResult = await handleUploadZTProductFileCDS(fileForHelper, bodyForHelper, user);
 
       if (uploadResult.error || uploadResult.status >= 400) {
+        // Si la subida falla, al menos la presentación se actualizó. Se podría implementar un rollback más complejo.
+        console.error('Error al subir archivo durante la actualización:', uploadResult.message);
       } else {
         processedFiles.push(uploadResult.data);
       }
@@ -238,15 +238,17 @@ async function ActivateOneZTProductsPresentacion(idpresentaok, user) {
   return res;
 }
 
-/** CRUD: GET PRESENTACIONES BY SKUID - AmirOrozco */
-//----------------------------------------------------------------
+// ============================================
+// CRUD: GET PRESENTACIONES BY SKUID
+// ============================================
 async function GetZTProductsPresentacionesBySKUID(skuid) {
   if (!skuid) throw new Error('Falta parámetro SKUID');
   return await ZTProducts_Presentaciones.find({ SKUID: skuid, DELETED: { $ne: true } }).lean();
 }
 
-/** CRUD BÁSICO (COSMOS DB SDK) - AmirOrozco */
-//----------------------------------------------------------------
+// ============================================
+// CRUD BÁSICO (COSMOS DB SDK)
+// ============================================
 async function GetAllZTProductsPresentacionesCosmos() {
   const container = await getPresentacionesCosmosContainer();
   const query = "SELECT * from c WHERE c.DELETED != true";
@@ -455,8 +457,9 @@ async function GetZTProductsPresentacionesBySKUIDCosmos(skuid) {
   return items;
 }
 
-/** MÉTODOS LOCALES CON BITÁCORA - AmirOrozco */
-//----------------------------------------------------------------
+// ============================================
+// MÉTODOS LOCALES CON BITÁCORA (mismo estilo amigo)
+// ============================================
 async function GetAllMethod(bitacora, req, params, paramString, body, dbServer) {
   let data = DATA();
 
@@ -842,8 +845,11 @@ async function GetBySKUIDMethod(bitacora, req, params, skuid, dbServer) {
   }
 }
 
-/** ORQUESTADOR PRINCIPAL (CAP Action) - AmirOrozco */
-//----------------------------------------------------------------
+// ============================================
+// ORQUESTADOR PRINCIPAL (CAP Action)
+//    ProcessType: GetAll | GetOne | AddOne | UpdateOne | DeleteLogic | DeleteHard | ActivateOne
+//    Params esperados: LoggedUser, DBServer (opcional), idpresentaok (para One/Update/Delete/Activate)
+// ============================================
 async function ZTProductsPresentacionesCRUD(req) {
   let bitacora = BITACORA();
   let data = DATA();
@@ -1013,8 +1019,9 @@ async function ZTProductsPresentacionesCRUD(req) {
   }
 }
 
-/** EXPORTS - AmirOrozco */
-//----------------------------------------------------------------
+// ============================================
+// EXPORTS
+// ============================================
 module.exports = {
   ZTProductsPresentacionesCRUD,
   GetAllZTProductsPresentaciones,
@@ -1025,7 +1032,6 @@ module.exports = {
   DeleteHardZTProductsPresentacion,
   ActivateOneZTProductsPresentacion,
   GetZTProductsPresentacionesBySKUID,
-  // Cosmos DB Functions
   GetAllZTProductsPresentacionesCosmos,
   GetOneZTProductsPresentacionCosmos,
   AddOneZTProductsPresentacionCosmos,

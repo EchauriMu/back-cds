@@ -380,29 +380,115 @@ async function DeleteLogicZTPromocion(idPromoOK, user) {
   if (!idPromoOK) throw new Error('IdPromoOK es requerido');
   if (!user) throw new Error('Usuario requerido para auditoría');
   
-  const filter = { IdPromoOK: idPromoOK, DELETED: false };
-  const deleteData = { DELETED: true, ACTIVED: false };
-  const promo = await saveWithAudit(ZTPromociones, filter, deleteData, user, 'UPDATE');
-  if (!promo) throw new Error(`No se encontró la promoción con IdPromoOK: ${idPromoOK}`);
-  return promo;
+  // Manejar uno o varios IDs
+  const ids = Array.isArray(idPromoOK) ? idPromoOK : [idPromoOK];
+  const results = [];
+  const errors = [];
+  
+  for (const id of ids) {
+    try {
+      const filter = { IdPromoOK: id, DELETED: false };
+      const deleteData = { DELETED: true, ACTIVED: false };
+      const promo = await saveWithAudit(ZTPromociones, filter, deleteData, user, 'UPDATE');
+      if (!promo) {
+        errors.push({ IdPromoOK: id, error: `No se encontró la promoción con IdPromoOK: ${id}` });
+      } else {
+        results.push(promo);
+      }
+    } catch (error) {
+      errors.push({ IdPromoOK: id, error: error.message });
+    }
+  }
+  
+  // Si es un solo ID, devolver el resultado directo o lanzar error
+  if (!Array.isArray(idPromoOK)) {
+    if (errors.length > 0) throw new Error(errors[0].error);
+    return results[0];
+  }
+  
+  // Si son múltiples IDs, devolver resumen
+  return {
+    success: results.length,
+    failed: errors.length,
+    results: results,
+    errors: errors
+  };
 }
 
 async function DeleteHardZTPromocion(idPromoOK) {
   if (!idPromoOK) throw new Error('IdPromoOK es requerido');
-  const promo = await ZTPromociones.findOneAndDelete({ IdPromoOK: idPromoOK }).lean();
-  if (!promo) throw new Error(`No se encontró la promoción con IdPromoOK: ${idPromoOK}`);
-  return promo;
+  
+  // Manejar uno o varios IDs
+  const ids = Array.isArray(idPromoOK) ? idPromoOK : [idPromoOK];
+  const results = [];
+  const errors = [];
+  
+  for (const id of ids) {
+    try {
+      const promo = await ZTPromociones.findOneAndDelete({ IdPromoOK: id }).lean();
+      if (!promo) {
+        errors.push({ IdPromoOK: id, error: `No se encontró la promoción con IdPromoOK: ${id}` });
+      } else {
+        results.push(promo);
+      }
+    } catch (error) {
+      errors.push({ IdPromoOK: id, error: error.message });
+    }
+  }
+  
+  // Si es un solo ID, devolver el resultado directo o lanzar error
+  if (!Array.isArray(idPromoOK)) {
+    if (errors.length > 0) throw new Error(errors[0].error);
+    return results[0];
+  }
+  
+  // Si son múltiples IDs, devolver resumen
+  return {
+    success: results.length,
+    failed: errors.length,
+    results: results,
+    errors: errors
+  };
 }
 
-async function ActivateOneZTPromocion(idPromoOK) {
+async function ActivateOneZTPromocion(idPromoOK, user) {
   if (!idPromoOK) throw new Error('IdPromoOK es requerido');
-  const promo = await ZTPromociones.findOneAndUpdate(
-    { IdPromoOK: idPromoOK },
-    { ACTIVED: true, DELETED: false },
-    { new: true, lean: true }
-  );
-  if (!promo) throw new Error(`No se encontró la promoción con IdPromoOK: ${idPromoOK}`);
-  return promo;
+  
+  // Manejar uno o varios IDs
+  const ids = Array.isArray(idPromoOK) ? idPromoOK : [idPromoOK];
+  const results = [];
+  const errors = [];
+  
+  for (const id of ids) {
+    try {
+      const promo = await ZTPromociones.findOneAndUpdate(
+        { IdPromoOK: id },
+        { ACTIVED: true, DELETED: false },
+        { new: true, lean: true }
+      );
+      if (!promo) {
+        errors.push({ IdPromoOK: id, error: `No se encontró la promoción con IdPromoOK: ${id}` });
+      } else {
+        results.push(promo);
+      }
+    } catch (error) {
+      errors.push({ IdPromoOK: id, error: error.message });
+    }
+  }
+  
+  // Si es un solo ID, devolver el resultado directo o lanzar error
+  if (!Array.isArray(idPromoOK)) {
+    if (errors.length > 0) throw new Error(errors[0].error);
+    return results[0];
+  }
+  
+  // Si son múltiples IDs, devolver resumen
+  return {
+    success: results.length,
+    failed: errors.length,
+    results: results,
+    errors: errors
+  };
 }
 
 // ============================================
@@ -517,46 +603,130 @@ async function DeleteLogicZTPromocionCosmos(idPromoOK, user) {
   if (!user) throw new Error('Usuario requerido para auditoría');
 
   const container = await getPromocionesCosmosContainer();
-  const { resource: currentItem } = await container.item(idPromoOK, idPromoOK).read();
-  if (!currentItem || currentItem.DELETED) throw new Error(`No se encontró la promoción con IdPromoOK: ${idPromoOK}`);
+  
+  // Manejar uno o varios IDs
+  const ids = Array.isArray(idPromoOK) ? idPromoOK : [idPromoOK];
+  const results = [];
+  const errors = [];
+  
+  for (const id of ids) {
+    try {
+      const { resource: currentItem } = await container.item(id, id).read();
+      if (!currentItem || currentItem.DELETED) {
+        errors.push({ IdPromoOK: id, error: `No se encontró la promoción con IdPromoOK: ${id}` });
+        continue;
+      }
 
-  const updatedItem = {
-    ...currentItem,
-    ACTIVED: false,
-    DELETED: true,
-    MODUSER: user,
-    MODDATE: new Date().toISOString(),
-    HISTORY: [...(currentItem.HISTORY || []), { user, action: 'DELETE_LOGIC', date: new Date().toISOString(), changes: { ACTIVED: false, DELETED: true } }]
+      const updatedItem = {
+        ...currentItem,
+        ACTIVED: false,
+        DELETED: true,
+        MODUSER: user,
+        MODDATE: new Date().toISOString(),
+        HISTORY: [...(currentItem.HISTORY || []), { user, action: 'DELETE_LOGIC', date: new Date().toISOString(), changes: { ACTIVED: false, DELETED: true } }]
+      };
+
+      const { resource: replacedItem } = await container.item(currentItem.id, currentItem.partitionKey).replace(updatedItem);
+      results.push(replacedItem);
+    } catch (error) {
+      errors.push({ IdPromoOK: id, error: error.message });
+    }
+  }
+  
+  // Si es un solo ID, devolver el resultado directo o lanzar error
+  if (!Array.isArray(idPromoOK)) {
+    if (errors.length > 0) throw new Error(errors[0].error);
+    return results[0];
+  }
+  
+  // Si son múltiples IDs, devolver resumen
+  return {
+    success: results.length,
+    failed: errors.length,
+    results: results,
+    errors: errors
   };
-
-  const { resource: replacedItem } = await container.item(currentItem.id, currentItem.partitionKey).replace(updatedItem);
-  return replacedItem;
 }
 
 async function DeleteHardZTPromocionCosmos(idPromoOK) {
   if (!idPromoOK) throw new Error('IdPromoOK es requerido');
   const container = await getPromocionesCosmosContainer();
-  await container.item(idPromoOK, idPromoOK).delete();
-  return { mensaje: 'Promoción eliminada permanentemente de Cosmos DB', IdPromoOK: idPromoOK };
+  
+  // Manejar uno o varios IDs
+  const ids = Array.isArray(idPromoOK) ? idPromoOK : [idPromoOK];
+  const results = [];
+  const errors = [];
+  
+  for (const id of ids) {
+    try {
+      await container.item(id, id).delete();
+      results.push({ mensaje: 'Promoción eliminada permanentemente de Cosmos DB', IdPromoOK: id });
+    } catch (error) {
+      errors.push({ IdPromoOK: id, error: error.message });
+    }
+  }
+  
+  // Si es un solo ID, devolver el resultado directo o lanzar error
+  if (!Array.isArray(idPromoOK)) {
+    if (errors.length > 0) throw new Error(errors[0].error);
+    return results[0];
+  }
+  
+  // Si son múltiples IDs, devolver resumen
+  return {
+    success: results.length,
+    failed: errors.length,
+    results: results,
+    errors: errors
+  };
 }
 
 async function ActivateOneZTPromocionCosmos(idPromoOK, user) {
   if (!idPromoOK) throw new Error('IdPromoOK es requerido');
   const container = await getPromocionesCosmosContainer();
-  const { resource: currentItem } = await container.item(idPromoOK, idPromoOK).read();
-  if (!currentItem) throw new Error(`No se encontró la promoción con IdPromoOK: ${idPromoOK}`);
+  
+  // Manejar uno o varios IDs
+  const ids = Array.isArray(idPromoOK) ? idPromoOK : [idPromoOK];
+  const results = [];
+  const errors = [];
+  
+  for (const id of ids) {
+    try {
+      const { resource: currentItem } = await container.item(id, id).read();
+      if (!currentItem) {
+        errors.push({ IdPromoOK: id, error: `No se encontró la promoción con IdPromoOK: ${id}` });
+        continue;
+      }
 
-  const updatedItem = {
-    ...currentItem,
-    ACTIVED: true,
-    DELETED: false,
-    MODUSER: user,
-    MODDATE: new Date().toISOString(),
-    HISTORY: [...(currentItem.HISTORY || []), { user, action: 'ACTIVATE', date: new Date().toISOString(), changes: { ACTIVED: true, DELETED: false } }]
+      const updatedItem = {
+        ...currentItem,
+        ACTIVED: true,
+        DELETED: false,
+        MODUSER: user,
+        MODDATE: new Date().toISOString(),
+        HISTORY: [...(currentItem.HISTORY || []), { user, action: 'ACTIVATE', date: new Date().toISOString(), changes: { ACTIVED: true, DELETED: false } }]
+      };
+
+      const { resource: replacedItem } = await container.item(currentItem.id, currentItem.partitionKey).replace(updatedItem);
+      results.push(replacedItem);
+    } catch (error) {
+      errors.push({ IdPromoOK: id, error: error.message });
+    }
+  }
+  
+  // Si es un solo ID, devolver el resultado directo o lanzar error
+  if (!Array.isArray(idPromoOK)) {
+    if (errors.length > 0) throw new Error(errors[0].error);
+    return results[0];
+  }
+  
+  // Si son múltiples IDs, devolver resumen
+  return {
+    success: results.length,
+    failed: errors.length,
+    results: results,
+    errors: errors
   };
-
-  const { resource: replacedItem } = await container.item(currentItem.id, currentItem.partitionKey).replace(updatedItem);
-  return replacedItem;
 }
 
 //####################################################################################
@@ -774,6 +944,7 @@ async function UpdatePromocionMethod(bitacora, params, paramString, body, req, u
         switch (dbServer) {
             case 'MongoDB':
                 if (isActivate) {
+                    // Ahora ActivateOneZTPromocion acepta user como segundo parámetro
                     result = await ActivateOneZTPromocion(idPromoOK, user);
                 } else {
                     result = await UpdateOneZTPromocion(

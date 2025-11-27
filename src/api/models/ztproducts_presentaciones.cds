@@ -1,8 +1,8 @@
 namespace mongodb;
 
 type FileData {
-    fileBase64   : LargeString;
-    FILETYPE     : String(10); // IMG, PDF, etc.
+    fileBase64   : LargeString; 
+    FILETYPE     : String(10);
     originalname : String(255);
     mimetype     : String(100);
     PRINCIPAL    : Boolean;
