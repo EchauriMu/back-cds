@@ -1,5 +1,12 @@
+/**
+ * Archivo: ztcategorias.js
+ * Autor: Bayron Arciniega
+ */
 const mongoose = require('mongoose');
 
+/** Schema: ModificationSchema
+ * Autor: Bayron Arciniega
+ */
 const ModificationSchema = new mongoose.Schema(
   {
     user: { type: String, required: true },
@@ -11,6 +18,9 @@ const ModificationSchema = new mongoose.Schema(
 );
 
 
+/** Schema: ZTCATEGORIAS
+ * Autor: Bayron Arciniega
+ */
 const ZTCATEGORIAS = new mongoose.Schema({
   CATID: {
     type: String,
@@ -56,22 +66,27 @@ const ZTCATEGORIAS = new mongoose.Schema({
     default: null
   },
   HISTORY: [ModificationSchema]
-
-
 });
+
+/** Hook: pre save - Auditar cambios en HISTORY
+ * Autor: Bayron Arciniega
+ */
 ZTCATEGORIAS.pre("save", function (next) {
   const doc = this;
 
-
+  /** Registro inicial
+   * Autor: Bayron Arciniega
+   */
   if (doc.isNew) {
-    // Registro inicial
     doc.HISTORY.push({
       user: doc.REGUSER,
       action: "CREATE",
       changes: doc.toObject(),
     });
   } else {
-    // Actualización
+    /** Actualización
+     * Autor: Bayron Arciniega
+     */
     const modifiedFields = doc.modifiedPaths().reduce((acc, path) => {
       if (!["HISTORY", "MODUSER", "MODDATE"].includes(path)) {
         acc[path] = doc.get(path);
@@ -79,17 +94,15 @@ ZTCATEGORIAS.pre("save", function (next) {
       return acc;
     }, {});
 
-
     if (Object.keys(modifiedFields).length > 0) {
       doc.MODDATE = new Date();
       doc.HISTORY.push({
         user: doc.MODUSER || "system",
         action: "UPDATE",
         changes: modifiedFields,
-          });
+      });
     }
   }
-
 
   next();
 });

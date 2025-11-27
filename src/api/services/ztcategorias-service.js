@@ -1,19 +1,25 @@
-// ============================================
-// IMPORTS
-// ============================================
+/**
+ * Archivo: ztcategorias-service.js
+ * Autor: Bayron Arciniega
+ */
+/** IMPORTS
+ * Autor: Bayron Arciniega
+ */
 const { getCosmosDatabase } = require('../../config/connectToMongoDB.config');
 const ZTCATEGORIAS = require('../models/mongodb/ztcategorias');
 const { OK, FAIL, BITACORA, DATA, AddMSG } = require('../../middlewares/respPWA.handler');
 const { saveWithAudit } = require('../../helpers/audit-timestap');
 
-// Util: payload desde CDS/Express
+/** Función: getPayload - Util: payload desde CDS/Express
+ * Autor: Bayron Arciniega
+ */
 function getPayload(req) {
   return req.data || req.req?.body || null;
 }
 
-// ============================================
-// UTIL: OBTENER CONTENEDOR DE COSMOS DB
-// ============================================
+/** UTIL: Obtener contenedor de Cosmos DB
+ * Autor: Bayron Arciniega
+ */
 async function getCosmosContainer(containerName, partitionKeyPath) {
   const database = getCosmosDatabase();
   if (!database) {
@@ -26,18 +32,26 @@ async function getCosmosContainer(containerName, partitionKeyPath) {
   return container;
 }
 
-// Helper específico para este servicio
+/** Helper específico para este servicio: getCategoriasCosmosContainer
+ * Autor: Bayron Arciniega
+ */
 async function getCategoriasCosmosContainer() {
   return getCosmosContainer('ZTCATEGORIAS', '/CATID');
 }
 
-// ============================================
-// OPERACIONES MONGO
-// ============================================
+/** OPERACIONES MONGO
+ * Autor: Bayron Arciniega
+ */
+/** Función: GetAllZTCategorias
+ * Autor: Bayron Arciniega
+ */
 async function GetAllZTCategorias() {
   return await ZTCATEGORIAS.find({ DELETED: { $ne: true } }).lean();
 }
 
+/** Función: GetOneZTCategoria
+ * Autor: Bayron Arciniega
+ */
 async function GetOneZTCategoria(catid) {
   if (!catid) throw new Error('Falta parámetro catid');
   const doc = await ZTCATEGORIAS.findOne({ CATID: catid }).lean();
@@ -45,10 +59,15 @@ async function GetOneZTCategoria(catid) {
   return doc;
 }
 
+/** Función: AddOneZTCategoria
+ * Autor: Bayron Arciniega
+ */
 async function AddOneZTCategoria(payload, user) {
   if (!payload) throw new Error('No se recibió payload');
 
-  // 🔹 Inyectar el usuario logueado si no viene en el body
+  /** Inyectar el usuario logueado si no viene en el body
+   * Autor: Bayron Arciniega
+   */
   if (!payload.REGUSER && user) {
     payload.REGUSER = user;
   }
@@ -67,7 +86,9 @@ async function AddOneZTCategoria(payload, user) {
     ACTIVED: payload.ACTIVED ?? true,
     DELETED: payload.DELETED ?? false,
     REGUSER: payload.REGUSER
-    // REGDATE y HISTORY se llenan por hook
+    /** Nota: REGDATE y HISTORY se llenan por hook
+     * Autor: Bayron Arciniega
+     */
   };
 
   const created = await saveWithAudit(ZTCATEGORIAS, {}, data, payload.REGUSER, 'CREATE');
@@ -75,12 +96,17 @@ async function AddOneZTCategoria(payload, user) {
 }
 
 
+/** Función: UpdateOneZTCategoria
+ * Autor: Bayron Arciniega
+ */
 async function UpdateOneZTCategoria(catid, cambios, user) {
   if (!catid) throw new Error('Falta parámetro catid');
   if (!cambios || Object.keys(cambios).length === 0) throw new Error('No se enviaron datos para actualizar');
 
-  // 💡 FIX: Prevenir colisión de CATID al actualizar.
-  // Si se intenta cambiar el CATID, verificar que no exista en otro documento.
+  /** Prevención de colisión de CATID al actualizar.
+   * Si se intenta cambiar el CATID, verificar que no exista en otro documento.
+   * Autor: Bayron Arciniega
+   */
   if (cambios.CATID && cambios.CATID !== catid) {
     const dup = await ZTCATEGORIAS.findOne({ CATID: cambios.CATID }).lean();
     if (dup) throw new Error(`El nuevo CATID '${cambios.CATID}' ya está en uso por otra categoría.`);
@@ -91,6 +117,9 @@ async function UpdateOneZTCategoria(catid, cambios, user) {
   return updated;
 }
 
+/** Función: DeleteLogicZTCategoria
+ * Autor: Bayron Arciniega
+ */
 async function DeleteLogicZTCategoria(catid, user) {
   if (!catid) throw new Error('Falta parámetro catid');
   const filter = { CATID: catid };
@@ -99,6 +128,9 @@ async function DeleteLogicZTCategoria(catid, user) {
   return res;
 }
 
+/** Función: DeleteHardZTCategoria
+ * Autor: Bayron Arciniega
+ */
 async function DeleteHardZTCategoria(catid) {
   if (!catid) throw new Error('Falta parámetro catid');
   const eliminado = await ZTCATEGORIAS.findOneAndDelete({ CATID: catid });
@@ -106,6 +138,9 @@ async function DeleteHardZTCategoria(catid) {
   return { mensaje: 'Categoría eliminada permanentemente', CATID: catid };
 }
 
+/** Función: ActivateZTCategoria
+ * Autor: Bayron Arciniega
+ */
 async function ActivateZTCategoria(catid, user) {
   if (!catid) throw new Error('Falta parámetro catid');
   const filter = { CATID: catid };
@@ -114,9 +149,12 @@ async function ActivateZTCategoria(catid, user) {
   return res;
 }
 
-// ============================================
-// OPERACIONES COSMOS DB
-// ============================================
+/** OPERACIONES COSMOS DB
+ * Autor: Bayron Arciniega
+ */
+/** Función: GetAllZTCategoriasCosmos
+ * Autor: Bayron Arciniega
+ */
 async function GetAllZTCategoriasCosmos() {
   const container = await getCategoriasCosmosContainer();
   const query = "SELECT * from c WHERE c.DELETED != true";
@@ -124,6 +162,9 @@ async function GetAllZTCategoriasCosmos() {
   return items;
 }
 
+/** Función: GetOneZTCategoriaCosmos
+ * Autor: Bayron Arciniega
+ */
 async function GetOneZTCategoriaCosmos(catid) {
   if (!catid) throw new Error('Falta parámetro catid');
   const container = await getCategoriasCosmosContainer();
@@ -132,10 +173,15 @@ async function GetOneZTCategoriaCosmos(catid) {
   return item;
 }
 
+/** Función: AddOneZTCategoriaCosmos
+ * Autor: Bayron Arciniega
+ */
 async function AddOneZTCategoriaCosmos(payload, user) {
   if (!payload) throw new Error('No se recibió payload');
 
-  // Inyectar el usuario logueado si no viene en el body
+  /** Inyectar el usuario logueado si no viene en el body
+   * Autor: Bayron Arciniega
+   */
   if (!payload.REGUSER && user) {
     payload.REGUSER = user;
   }
@@ -171,6 +217,9 @@ async function AddOneZTCategoriaCosmos(payload, user) {
   return createdItem;
 }
 
+/** Función: UpdateOneZTCategoriaCosmos
+ * Autor: Bayron Arciniega
+ */
 async function UpdateOneZTCategoriaCosmos(catid, cambios, user) {
   if (!catid) throw new Error('Falta parámetro catid');
   if (!cambios || Object.keys(cambios).length === 0) throw new Error('No se enviaron datos para actualizar');
@@ -187,8 +236,14 @@ async function UpdateOneZTCategoriaCosmos(catid, cambios, user) {
   const updatedItem = {
     ...currentItem,
     ...cambios,
-    id: currentItem.id, // El ID no debe cambiar en una actualización
-    partitionKey: currentItem.partitionKey, // La clave de partición no debe cambiar
+    /** El ID no debe cambiar en una actualización
+     * Autor: Bayron Arciniega
+     */
+    id: currentItem.id,
+    /** La clave de partición no debe cambiar
+     * Autor: Bayron Arciniega
+     */
+    partitionKey: currentItem.partitionKey,
     MODUSER: user,
     MODDATE: new Date().toISOString(),
     HISTORY: [...(currentItem.HISTORY || []), { user, action: 'UPDATE', date: new Date().toISOString(), changes: cambios }]
@@ -198,6 +253,9 @@ async function UpdateOneZTCategoriaCosmos(catid, cambios, user) {
   return replacedItem;
 }
 
+/** Función: DeleteLogicZTCategoriaCosmos
+ * Autor: Bayron Arciniega
+ */
 async function DeleteLogicZTCategoriaCosmos(catid, user) {
   if (!catid) throw new Error('Falta parámetro catid');
   const container = await getCategoriasCosmosContainer();
@@ -217,6 +275,9 @@ async function DeleteLogicZTCategoriaCosmos(catid, user) {
   return replacedItem;
 }
 
+/** Función: DeleteHardZTCategoriaCosmos
+ * Autor: Bayron Arciniega
+ */
 async function DeleteHardZTCategoriaCosmos(catid) {
   if (!catid) throw new Error('Falta parámetro catid');
   const container = await getCategoriasCosmosContainer();
@@ -224,6 +285,9 @@ async function DeleteHardZTCategoriaCosmos(catid) {
   return { mensaje: 'Categoría eliminada permanentemente de Cosmos DB', CATID: catid };
 }
 
+/** Función: ActivateZTCategoriaCosmos
+ * Autor: Bayron Arciniega
+ */
 async function ActivateZTCategoriaCosmos(catid, user) {
   if (!catid) throw new Error('Falta parámetro catid');
   const container = await getCategoriasCosmosContainer();
@@ -243,9 +307,12 @@ async function ActivateZTCategoriaCosmos(catid, user) {
   return replacedItem;
 }
 
-// ============================================
-// MÉTODOS con BITÁCORA (patrón)
-// ============================================
+/** MÉTODOS con BITÁCORA (patrón)
+ * Autor: Bayron Arciniega
+ */
+/** Función: GetAllMethod - MÉTODOS con BITÁCORA
+ * Autor: Bayron Arciniega
+ */
 async function GetAllMethod(bitacora, req, params, paramString, body, dbServer) {
   let data = DATA();
   data.process = 'Obtener todas las categorías';
@@ -287,6 +354,9 @@ async function GetAllMethod(bitacora, req, params, paramString, body, dbServer) 
   }
 }
 
+/** Función: GetOneMethod - MÉTODOS con BITÁCORA
+ * Autor: Bayron Arciniega
+ */
 async function GetOneMethod(bitacora, params, catid, dbServer) {
   let data = DATA();
   data.process = 'Obtener una categoría';
@@ -325,6 +395,9 @@ async function GetOneMethod(bitacora, params, catid, dbServer) {
   }
 }
 
+/** Función: AddOneMethod - MÉTODOS con BITÁCORA
+ * Autor: Bayron Arciniega
+ */
 async function AddOneMethod(bitacora, params, body, req, dbServer) {
   let data = DATA();
   data.process = 'Agregar categoría';
@@ -371,6 +444,9 @@ async function AddOneMethod(bitacora, params, body, req, dbServer) {
   }
 }
 
+/** Función: UpdateOneMethod - MÉTODOS con BITÁCORA
+ * Autor: Bayron Arciniega
+ */
 async function UpdateOneMethod(bitacora, params, catid, req, user, dbServer) {
   let data = DATA();
   data.process = 'Actualizar categoría';
@@ -409,6 +485,9 @@ async function UpdateOneMethod(bitacora, params, catid, req, user, dbServer) {
   }
 }
 
+/** Función: DeleteLogicMethod - MÉTODOS con BITÁCORA
+ * Autor: Bayron Arciniega
+ */
 async function DeleteLogicMethod(bitacora, params, catid, user, dbServer) {
   let data = DATA();
   data.process = 'Borrado lógico de categoría';
@@ -453,6 +532,9 @@ async function DeleteLogicMethod(bitacora, params, catid, user, dbServer) {
   }
 }
 
+/** Función: DeleteHardMethod - MÉTODOS con BITÁCORA
+ * Autor: Bayron Arciniega
+ */
 async function DeleteHardMethod(bitacora, params, catid, dbServer) {
   let data = DATA();
   data.process = 'Borrado permanente de categoría';
@@ -491,6 +573,9 @@ async function DeleteHardMethod(bitacora, params, catid, dbServer) {
   }
 }
 
+/** Función: ActivateOneMethod - MÉTODOS con BITÁCORA
+ * Autor: Bayron Arciniega
+ */
 async function ActivateOneMethod(bitacora, params, catid, user, dbServer) {
   let data = DATA();
   data.process = 'Activar categoría';
@@ -529,9 +614,9 @@ async function ActivateOneMethod(bitacora, params, catid, user, dbServer) {
   }
 }
 
-// ============================================
-// ORQUESTADOR PRINCIPAL
-// ============================================
+/** ORQUESTADOR PRINCIPAL - ZTCategoriasCRUD
+ * Autor: Bayron Arciniega
+ */
 async function ZTCategoriasCRUD(req) {
   let bitacora = BITACORA();
   let data = DATA();
@@ -541,7 +626,9 @@ async function ZTCategoriasCRUD(req) {
     const body = req.req?.body;
     const paramString = params ? new URLSearchParams(params).toString().trim() : '';
 
-    // soportar catid en mayúsculas o minúsculas
+    /** Soporte: catid puede venir en mayúsculas o minúsculas
+     * Autor: Bayron Arciniega
+     */
     const catid = params.catid || params.CATID || undefined;
     const { ProcessType, LoggedUser, DBServer } = params;
 
@@ -679,7 +766,9 @@ async function ZTCategoriasCRUD(req) {
   }
 }
 
-// EXPORTS
+/** EXPORTS
+ * Autor: Bayron Arciniega
+ */
 module.exports = {
   ZTCategoriasCRUD,
 
@@ -690,7 +779,9 @@ module.exports = {
   DeleteLogicZTCategoria,
   DeleteHardZTCategoria,
   ActivateZTCategoria,
-  // Cosmos DB Functions
+  /** Cosmos DB Functions
+   * Autor: Bayron Arciniega
+   */
   GetAllZTCategoriasCosmos,
   GetOneZTCategoriaCosmos,
   AddOneZTCategoriaCosmos,
