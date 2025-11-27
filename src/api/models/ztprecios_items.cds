@@ -1,5 +1,4 @@
 namespace mongodb;
-
 entity ZTPRECIOS_ITEMS {
   key IdPrecioOK     : String(64);
       IdListaOK      : String(64);

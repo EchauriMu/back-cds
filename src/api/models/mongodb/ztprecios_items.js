@@ -1,6 +1,5 @@
 import mongoose from "mongoose";
 
-/** Historial embebido */
 const ModificationSchema = new mongoose.Schema(
   {
     user:   { type: String, required: true },
@@ -35,7 +34,6 @@ const ZTPRECIOS_ITEMS = new mongoose.Schema(
   },
 );
 
-// Middleware de auditoría
 ZTPRECIOS_ITEMS.pre("save", function(next) {
   const doc = this;
   const EXCLUDE = new Set(["HISTORY", "MODUSER", "MODDATE", "updatedAt", "createdAt", "__v"]);

@@ -1,19 +1,12 @@
-// ============================================
-// IMPORTS
-// ============================================
 const { getCosmosDatabase } = require('../../config/connectToMongoDB.config');
 const { ZTPrecios_ITEMS } = require('../models/mongodb/ztprecios_items');
 const { OK, FAIL, BITACORA, DATA, AddMSG } = require('../../middlewares/respPWA.handler');
 const { saveWithAudit } = require('../../helpers/audit-timestap');
 
-// Util: payload desde CDS/Express
 function getPayload(req) {
   return req.data || req.req?.body || null;
 }
 
-// ============================================
-// UTIL: OBTENER CONTENEDOR DE COSMOS DB
-// ============================================
 async function getCosmosContainer(containerName, partitionKeyPath) {
   const database = getCosmosDatabase();
   if (!database) {
@@ -26,14 +19,10 @@ async function getCosmosContainer(containerName, partitionKeyPath) {
   return container;
 }
 
-// Helper específico para este servicio
 async function getPreciosItemsCosmosContainer() {
   return getCosmosContainer('ZTPRECIOS_ITEMS', '/IdPrecioOK');
 }
 
-// ============================================
-// CRUD MONGO (con auditoría donde aplica)
-// ============================================
 async function GetAllZTPreciosItems() {
   return await ZTPrecios_ITEMS.find({ DELETED: { $ne: true } }).lean();
 }
@@ -67,7 +56,6 @@ async function AddOneZTPreciosItem(payload, user) {
     Precio: payload.Precio,
     ACTIVED: payload.ACTIVED ?? true,
     DELETED: payload.DELETED ?? false,
-    // REGUSER/REGDATE se setean en saveWithAudit CREATE
   };
 
   const created = await saveWithAudit(ZTPrecios_ITEMS, {}, data, user, 'CREATE');
@@ -111,9 +99,6 @@ async function GetZTPreciosItemsByIdPresentaOK(idPresentaOK) {
   return await ZTPrecios_ITEMS.find({ IdPresentaOK: idPresentaOK, DELETED: { $ne: true } }).lean();
 }
 
-// ============================================
-// CRUD COSMOS DB
-// ============================================
 async function GetAllZTPreciosItemsCosmos() {
   const container = await getPreciosItemsCosmosContainer();
   const query = "SELECT * from c WHERE c.DELETED != true";
@@ -226,9 +211,6 @@ async function GetZTPreciosItemsByIdPresentaOKCosmos(idPresentaOK) {
   return items;
 }
 
-// ============================================
-// MÉTODOS con BITÁCORA (estilo amigo)
-// ============================================
 async function GetAllMethod(bitacora, req, params, paramString, body, dbServer) {
   let data = DATA();
   data.process = 'Obtener todos los precios';
@@ -268,7 +250,7 @@ async function GetAllMethod(bitacora, req, params, paramString, body, dbServer) 
   } catch (error) {
     data.messageUSR = 'Error al obtener los precios';
     data.messageDEV = error.message;
-    data.stack = process.env.NODE_ENV === 'development' ? error.stack : undefined; // eslint-disable-line
+    data.stack = process.env.NODE_ENV === 'development' ? error.stack : undefined;
     bitacora = AddMSG(bitacora, data, 'FAIL', 500, true);
     bitacora.success = false;
     return bitacora;
@@ -355,7 +337,6 @@ async function AddOneMethod(bitacora, params, body, req, dbServer) {
       req.http.res.status(201);
       const id = (result && (result.IdPrecioOK || result?.data?.IdPrecioOK)) || '';
       if (id) {
-        // Ajusta el entity set si tu ruta difiere (por defecto 'Presentaciones')
         req.http.res.set('Location', `/api/ztprecios-items/Precios('${id}')`);
       }
     }
@@ -593,11 +574,6 @@ async function GetByIdPresentaOKMethod(bitacora, req, params, idPresentaOK, dbSe
   }
 }
 
-// ============================================
-// ORQUESTADOR PRINCIPAL (CAP Action)
-//    ProcessType: GetAll | GetOne | AddOne | UpdateOne | DeleteLogic | DeleteHard | ActivateOne
-//    Params esperados: LoggedUser, DBServer (opcional), idpresentaok (para One/Update/Delete/Activate)
-// ============================================
 async function ZTPreciosItemsCRUD(req) {
   let bitacora = BITACORA();
   let data = DATA();
@@ -632,7 +608,7 @@ async function ZTPreciosItemsCRUD(req) {
     bitacora.queryString = paramString;
     bitacora.method      = req.req?.method || 'UNKNOWN';
     bitacora.api         = '/api/ztproducts-presentaciones/productsPresentacionesCRUD';
-    bitacora.server      = process.env.SERVER_NAME || 'No especificado'; // eslint-disable-line
+    bitacora.server      = process.env.SERVER_NAME || 'No especificado';
 
     switch (ProcessType) {
       case 'GetAll':
@@ -740,7 +716,7 @@ async function ZTPreciosItemsCRUD(req) {
     data.process = 'Catch principal ZTPreciosItemsCRUD';
     data.messageUSR = 'Ocurrió un error inesperado en el endpoint';
     data.messageDEV = error.message;
-    data.stack = process.env.NODE_ENV === 'development' ? error.stack : undefined; // eslint-disable-line
+    data.stack = process.env.NODE_ENV === 'development' ? error.stack : undefined;
     bitacora = AddMSG(bitacora, data, 'FAIL', 500, true);
     bitacora.finalRes = true;
   }
@@ -758,9 +734,6 @@ async function ZTPreciosItemsCRUD(req) {
 
 }
 
-// ============================================
-// EXPORTS
-// ============================================
 module.exports = {
   ZTPreciosItemsCRUD,
 
@@ -772,7 +745,6 @@ module.exports = {
   DeleteHardZTPreciosItem,
   ActivateOneZTPreciosItem,
   GetZTPreciosItemsByIdPresentaOK,
-  // Cosmos DB Functions
   GetAllZTPreciosItemsCosmos,
   GetOneZTPreciosItemCosmos,
   AddOneZTPreciosItemCosmos,
