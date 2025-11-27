@@ -1,23 +1,28 @@
-// ============================================
-// IMPORTS
-// ============================================
+/*
+ * ============================================
+ * MÓDULO: SERVICIO DE PROMOCIONES
+ * ============================================
+ * Autores: LAURA PANIAGUA y ALBERTO PARDO
+ * Descripción: Servicio completo para gestión de promociones
+ * con soporte para MongoDB y Cosmos DB
+ * ============================================
+ */
+
 const { getCosmosDatabase } = require('../../config/connectToMongoDB.config');
 const mongoose = require('mongoose');
 const ZTPromociones = require('../models/mongodb/ztpromociones');
 const { OK, FAIL, BITACORA, DATA, AddMSG } = require('../../middlewares/respPWA.handler');
 const { saveWithAudit } = require('../../helpers/audit-timestap');
 
-// ============================================
-// UTIL: OBTENER PAYLOAD DESDE CDS/EXPRESS
-// ============================================
-function getPayload(req) {
+/* ============================================
+ * SECCIÓN: UTILIDADES
+ * Autores: LAURA PANIAGUA y ALBERTO PARDO
+ * ============================================ */
+function getPayload(req) {                                  
   const payload = req.req?.body || req.data || null;  
   return payload;
 }
 
-// ============================================
-// UTIL: OBTENER CONTENEDOR DE COSMOS DB
-// ============================================
 async function getCosmosContainer(containerName, partitionKeyPath) {
   const database = getCosmosDatabase();
   if (!database) {
@@ -30,31 +35,24 @@ async function getCosmosContainer(containerName, partitionKeyPath) {
   return container;
 }
 
-// Helper específico para este servicio
 async function getPromocionesCosmosContainer() {
   return getCosmosContainer('ZTPROMOCIONES', '/IdPromoOK');
 }
 
-// ============================================
-// CRUD BÁSICO (MONGO PURO) - Capa 1
-// ============================================
-
-//----------------------------------------
-//FIC: CRUD Promociones Service with Bitacora
-//----------------------------------------
-/* EndPoint: localhost:8080/api/ztpromociones/crudPromociones?ProcessType='GetFilters'  */
+/* ============================================
+ * SECCIÓN: ENDPOINT PRINCIPAL
+ * Autores: LAURA PANIAGUA y ALBERTO PARDO
+ * ============================================ */
 async function crudZTPromociones(req) {
   
   let bitacora = BITACORA();
   let data = DATA();  
 
   try {
-    // 1. EXTRAER Y SERIALIZAR PARÁMETROS
     const params = req.req?.query || {};
     const body = req.req?.body;
     const paramString = params ? new URLSearchParams(params).toString().trim() : '';
-    const { ProcessType, LoggedUser, DBServer, IdPromoOK } = params;    
-    // 2. VALIDAR PARÁMETROS OBLIGATORIOS
+    const { ProcessType, LoggedUser, DBServer, IdPromoOK } = params;
     if (!ProcessType) {
       data.process = 'Validación de parámetros obligatorios';
       data.messageUSR = 'Falta parámetro obligatorio: ProcessType';
@@ -72,18 +70,16 @@ async function crudZTPromociones(req) {
       bitacora.finalRes = true;
       return FAIL(bitacora);
     }
-    
-    // 3. CONFIGURAR CONTEXTO DE LA BITÁCORA
-    const dbServer = DBServer || 'MongoDB'; // Default explícito
+
+    const dbServer = DBServer || 'MongoDB';
     bitacora.processType = ProcessType;
     bitacora.loggedUser = LoggedUser;
     bitacora.dbServer = dbServer;
     bitacora.queryString = paramString;
     bitacora.method = req.req?.method || 'UNKNOWN';
     bitacora.api = '/api/ztpromociones/crudPromociones';
-    bitacora.server = process.env.SERVER_NAME || 'No especificado'; // eslint-disable-line
+    bitacora.server = process.env.SERVER_NAME || 'No especificado';
 
-    // 4. EJECUTAR OPERACIÓN SEGÚN PROCESSTYPE
     switch (ProcessType) {
       case 'GetAll':
         bitacora = await GetPromocionMethod(bitacora, params, paramString, body, req, dbServer);
@@ -180,7 +176,6 @@ async function crudZTPromociones(req) {
           bitacora.finalRes = true;
           return FAIL(bitacora);
         }
-        // Agregar operation=activate para el método UpdatePromocionMethod
         const activateParams = { ...params, operation: 'activate' };
         bitacora = await UpdatePromocionMethod(bitacora, activateParams, paramString, body, req, LoggedUser, dbServer);
         if (!bitacora.success) {
@@ -198,24 +193,20 @@ async function crudZTPromociones(req) {
         return FAIL(bitacora);
     }
 
-    
     return OK(bitacora);
     
   } catch (error) {
-    // Si el error ya tiene finalRes = true, significa que fue manejado en un método local
     if (bitacora.finalRes) {
       return FAIL(bitacora);
     }
-    
-    // Error no manejado - captura inesperada
+
     data.process = 'Catch principal crudZTPromociones';
     data.messageUSR = 'Ocurrió un error inesperado en el endpoint';
     data.messageDEV = error.message;
-    data.stack = process.env.NODE_ENV === 'development' ? error.stack : undefined; // eslint-disable-line
+    data.stack = process.env.NODE_ENV === 'development' ? error.stack : undefined;
     bitacora = AddMSG(bitacora, data, 'FAIL', 500, true);
     bitacora.finalRes = true;
-    
-    // NOTIFICACIÓN ESTRUCTURADA A CAP
+
     if (req?.error) {
       req.error({
         code: 'Internal-Server-Error',
@@ -227,26 +218,27 @@ async function crudZTPromociones(req) {
       });
     }
     
-    // TODO: Implementar registro en tabla de errores
-    // await logErrorToDatabase(error, bitacora);
-    
-    // TODO: Implementar notificación de error
-    // await notifyError(bitacora.loggedUser, error);
-    
     return FAIL(bitacora);
   }
 }
 
-//####################################################################################
-//FIC: Methods for each operation with Bitacora - Capa 2
-//####################################################################################
+/* ============================================
+ * SECCIÓN: OPERACIONES MONGODB
+ * Autores: LAURA PANIAGUA y ALBERTO PARDO
+ * ============================================ */
 
+/* ------------------------------------------
+ * FUNCIÓN: GetAllZTPromociones
+ * Autores: LAURA PANIAGUA y ALBERTO PARDO
+ * ------------------------------------------ */
 async function GetAllZTPromociones() {
-  // Devolver todas las promociones, incluyendo las inactivas (DELETED: true)
-  // Ordenar por DELETED (activas primero) y luego por fecha de creación
   return await ZTPromociones.find({}).sort({ DELETED: 1, REGDATE: -1 }).lean();
 }
 
+/* ------------------------------------------
+ * FUNCIÓN: GetOneZTPromocion
+ * Autores: LAURA PANIAGUA y ALBERTO PARDO
+ * ------------------------------------------ */
 async function GetOneZTPromocion(idPromoOK) {
   if (!idPromoOK) throw new Error('IdPromoOK es requerido');
   const promo = await ZTPromociones.findOne({ IdPromoOK: idPromoOK, ACTIVED: true, DELETED: false }).lean();
@@ -254,6 +246,10 @@ async function GetOneZTPromocion(idPromoOK) {
   return promo;
 }
 
+/* ------------------------------------------
+ * FUNCIÓN: AddOneZTPromocion
+ * Autores: LAURA PANIAGUA y ALBERTO PARDO
+ * ------------------------------------------ */
 async function AddOneZTPromocion(payload, user) {
   const required = ['IdPromoOK', 'Titulo', 'FechaIni', 'FechaFin'];
   const missing = required.filter(k => !payload[k]);
@@ -263,14 +259,12 @@ async function AddOneZTPromocion(payload, user) {
   const existe = await ZTPromociones.findOne({ IdPromoOK: payload.IdPromoOK }).lean();
   if (existe) throw new Error(`Ya existe una promoción con IdPromoOK: ${payload.IdPromoOK}`);
   
-  // Validar que tenga al menos productos aplicables
   const hasProducts = payload.ProductosAplicables && payload.ProductosAplicables.length > 0;
   
   if (!hasProducts) {
     throw new Error('Debe especificar al menos un producto aplicable');
   }
   
-  // Validar descuento
   const tipoDescuento = payload.TipoDescuento || 'PORCENTAJE';
   if (tipoDescuento === 'PORCENTAJE') {
     if (!payload.DescuentoPorcentaje || payload.DescuentoPorcentaje <= 0 || payload.DescuentoPorcentaje > 100) {
@@ -282,14 +276,12 @@ async function AddOneZTPromocion(payload, user) {
     }
   }
   
-  // Validar fechas
   const fechaIni = new Date(payload.FechaIni);
   const fechaFin = new Date(payload.FechaFin);
   if (fechaFin <= fechaIni) {
     throw new Error('La fecha fin debe ser posterior a la fecha inicio');
   }
   
-  // Preparar datos de la promoción
   const promoData = { 
     ...payload, 
     ACTIVED: payload.ACTIVED ?? true, 
@@ -303,11 +295,14 @@ async function AddOneZTPromocion(payload, user) {
   return await saveWithAudit(ZTPromociones, {}, promoData, user, 'CREATE');
 }
 
+/* ------------------------------------------
+ * FUNCIÓN: UpdateOneZTPromocion
+ * Autores: LAURA PANIAGUA y ALBERTO PARDO
+ * ------------------------------------------ */
 async function UpdateOneZTPromocion(idPromoOK, payload, user) {
   if (!idPromoOK) throw new Error('IdPromoOK es requerido');
   if (!user) throw new Error('Usuario requerido para auditoría');
   
-  // Buscar la promoción existente
   const existingPromo = await ZTPromociones.findOne({ 
     IdPromoOK: idPromoOK, 
     DELETED: false 
@@ -317,14 +312,12 @@ async function UpdateOneZTPromocion(idPromoOK, payload, user) {
     throw new Error(`No se encontró la promoción con IdPromoOK: ${idPromoOK}`);
   }
   
-  // Preparar datos de actualización
   const updateData = {
     ...payload,
     MODUSER: user,
     MODDATE: new Date()
   };
   
-  // Si se actualizan las fechas, validar que sean correctas
   if (updateData.FechaIni || updateData.FechaFin) {
     const fechaIni = new Date(updateData.FechaIni || existingPromo.FechaIni);
     const fechaFin = new Date(updateData.FechaFin || existingPromo.FechaFin);
@@ -334,12 +327,10 @@ async function UpdateOneZTPromocion(idPromoOK, payload, user) {
     }
   }
   
-  // Validar descuento solo si se está actualizando explícitamente
   if (updateData.TipoDescuento || updateData.DescuentoPorcentaje !== undefined || updateData.DescuentoMonto !== undefined) {
     const tipoDescuento = updateData.TipoDescuento || existingPromo.TipoDescuento;
     
     if (tipoDescuento === 'PORCENTAJE') {
-      // Solo validar si se proporciona un nuevo valor de descuento
       if (updateData.DescuentoPorcentaje !== undefined) {
         const descuento = updateData.DescuentoPorcentaje;
         if (descuento <= 0 || descuento > 100) {
@@ -347,7 +338,6 @@ async function UpdateOneZTPromocion(idPromoOK, payload, user) {
         }
       }
     } else if (tipoDescuento === 'MONTO_FIJO') {
-      // Solo validar si se proporciona un nuevo valor de descuento
       if (updateData.DescuentoMonto !== undefined) {
         const descuento = updateData.DescuentoMonto;
         if (descuento <= 0) {
@@ -357,7 +347,6 @@ async function UpdateOneZTPromocion(idPromoOK, payload, user) {
     }
   }
   
-  // Validar que tenga al menos productos aplicables si se está actualizando
   if (updateData.ProductosAplicables !== undefined) {
     const hasProducts = updateData.ProductosAplicables && updateData.ProductosAplicables.length > 0;
     
@@ -376,11 +365,14 @@ async function UpdateOneZTPromocion(idPromoOK, payload, user) {
   return promo;
 }
 
+/* ------------------------------------------
+ * FUNCIÓN: DeleteLogicZTPromocion
+ * Autores: LAURA PANIAGUA y ALBERTO PARDO
+ * ------------------------------------------ */
 async function DeleteLogicZTPromocion(idPromoOK, user) {
   if (!idPromoOK) throw new Error('IdPromoOK es requerido');
   if (!user) throw new Error('Usuario requerido para auditoría');
   
-  // Manejar uno o varios IDs
   const ids = Array.isArray(idPromoOK) ? idPromoOK : [idPromoOK];
   const results = [];
   const errors = [];
@@ -400,13 +392,11 @@ async function DeleteLogicZTPromocion(idPromoOK, user) {
     }
   }
   
-  // Si es un solo ID, devolver el resultado directo o lanzar error
   if (!Array.isArray(idPromoOK)) {
     if (errors.length > 0) throw new Error(errors[0].error);
     return results[0];
   }
   
-  // Si son múltiples IDs, devolver resumen
   return {
     success: results.length,
     failed: errors.length,
@@ -415,10 +405,13 @@ async function DeleteLogicZTPromocion(idPromoOK, user) {
   };
 }
 
+/* ------------------------------------------
+ * FUNCIÓN: DeleteHardZTPromocion
+ * Autores: LAURA PANIAGUA y ALBERTO PARDO
+ * ------------------------------------------ */
 async function DeleteHardZTPromocion(idPromoOK) {
   if (!idPromoOK) throw new Error('IdPromoOK es requerido');
   
-  // Manejar uno o varios IDs
   const ids = Array.isArray(idPromoOK) ? idPromoOK : [idPromoOK];
   const results = [];
   const errors = [];
@@ -436,13 +429,11 @@ async function DeleteHardZTPromocion(idPromoOK) {
     }
   }
   
-  // Si es un solo ID, devolver el resultado directo o lanzar error
   if (!Array.isArray(idPromoOK)) {
     if (errors.length > 0) throw new Error(errors[0].error);
     return results[0];
   }
   
-  // Si son múltiples IDs, devolver resumen
   return {
     success: results.length,
     failed: errors.length,
@@ -451,10 +442,13 @@ async function DeleteHardZTPromocion(idPromoOK) {
   };
 }
 
+/* ------------------------------------------
+ * FUNCIÓN: ActivateOneZTPromocion
+ * Autores: LAURA PANIAGUA y ALBERTO PARDO
+ * ------------------------------------------ */
 async function ActivateOneZTPromocion(idPromoOK, user) {
   if (!idPromoOK) throw new Error('IdPromoOK es requerido');
   
-  // Manejar uno o varios IDs
   const ids = Array.isArray(idPromoOK) ? idPromoOK : [idPromoOK];
   const results = [];
   const errors = [];
@@ -476,13 +470,11 @@ async function ActivateOneZTPromocion(idPromoOK, user) {
     }
   }
   
-  // Si es un solo ID, devolver el resultado directo o lanzar error
   if (!Array.isArray(idPromoOK)) {
     if (errors.length > 0) throw new Error(errors[0].error);
     return results[0];
   }
   
-  // Si son múltiples IDs, devolver resumen
   return {
     success: results.length,
     failed: errors.length,
@@ -491,29 +483,34 @@ async function ActivateOneZTPromocion(idPromoOK, user) {
   };
 }
 
-// ============================================
-// CRUD BÁSICO (COSMOS DB) - Capa 1
-// ============================================
+/* ============================================
+ * SECCIÓN: OPERACIONES COSMOS DB
+ * Autores: LAURA PANIAGUA y ALBERTO PARDO
+ * ============================================ */
+
+/* ------------------------------------------
+ * FUNCIÓN: GetAllZTPromocionesCosmos
+ * Autores: LAURA PANIAGUA y ALBERTO PARDO
+ * ------------------------------------------ */
 async function GetAllZTPromocionesCosmos() {
   const container = await getPromocionesCosmosContainer();
-  // Se quita el ORDER BY para evitar el error de índice compuesto en Cosmos DB.
-  // La ordenación se realizará en el código de la aplicación.
   const query = "SELECT * from c";
   const { resources: items } = await container.items.query(query).fetchAll();
 
-  // Ordenar los resultados en JavaScript, replicando la lógica de MongoDB.
   items.sort((a, b) => {
-    // 1. Poner los activos (DELETED: false) primero.
     if (a.DELETED !== b.DELETED) {
       return a.DELETED ? 1 : -1;
     }
-    // 2. Para los que tienen el mismo estado, ordenar por fecha de registro descendente (más nuevos primero).
     return new Date(b.REGDATE) - new Date(a.REGDATE);
   });
 
   return items;
 }
 
+/* ------------------------------------------
+ * FUNCIÓN: GetOneZTPromocionCosmos
+ * Autores: LAURA PANIAGUA y ALBERTO PARDO
+ * ------------------------------------------ */
 async function GetOneZTPromocionCosmos(idPromoOK) {
   if (!idPromoOK) throw new Error('IdPromoOK es requerido');
   const container = await getPromocionesCosmosContainer();
@@ -522,6 +519,10 @@ async function GetOneZTPromocionCosmos(idPromoOK) {
   return item;
 }
 
+/* ------------------------------------------
+ * FUNCIÓN: AddOneZTPromocionCosmos
+ * Autores: LAURA PANIAGUA y ALBERTO PARDO
+ * ------------------------------------------ */
 async function AddOneZTPromocionCosmos(payload, user) {
   const required = ['IdPromoOK', 'Titulo', 'FechaIni', 'FechaFin'];
   const missing = required.filter(k => !payload[k]);
@@ -533,7 +534,6 @@ async function AddOneZTPromocionCosmos(payload, user) {
   const { resource: existing } = await container.item(payload.IdPromoOK, payload.IdPromoOK).read().catch(() => ({}));
   if (existing) throw new Error(`Ya existe una promoción con IdPromoOK: ${payload.IdPromoOK}`);
 
-  // Validaciones de negocio
   if (!payload.ProductosAplicables || payload.ProductosAplicables.length === 0) {
     throw new Error('Debe especificar al menos un producto aplicable');
   }
@@ -573,6 +573,10 @@ async function AddOneZTPromocionCosmos(payload, user) {
   return createdItem;
 }
 
+/* ------------------------------------------
+ * FUNCIÓN: UpdateOneZTPromocionCosmos
+ * Autores: LAURA PANIAGUA y ALBERTO PARDO
+ * ------------------------------------------ */
 async function UpdateOneZTPromocionCosmos(idPromoOK, payload, user) {
   if (!idPromoOK) throw new Error('IdPromoOK es requerido');
   if (!user) throw new Error('Usuario requerido para auditoría');
@@ -580,9 +584,6 @@ async function UpdateOneZTPromocionCosmos(idPromoOK, payload, user) {
   const container = await getPromocionesCosmosContainer();
   const { resource: currentItem } = await container.item(idPromoOK, idPromoOK).read();
   if (!currentItem || currentItem.DELETED) throw new Error(`No se encontró la promoción con IdPromoOK: ${idPromoOK}`);
-
-  // Validaciones de negocio (similar a la versión de Mongo)
-  // ...
 
   const updatedItem = {
     ...currentItem,
@@ -598,13 +599,16 @@ async function UpdateOneZTPromocionCosmos(idPromoOK, payload, user) {
   return replacedItem;
 }
 
+/* ------------------------------------------
+ * FUNCIÓN: DeleteLogicZTPromocionCosmos
+ * Autores: LAURA PANIAGUA y ALBERTO PARDO
+ * ------------------------------------------ */
 async function DeleteLogicZTPromocionCosmos(idPromoOK, user) {
   if (!idPromoOK) throw new Error('IdPromoOK es requerido');
   if (!user) throw new Error('Usuario requerido para auditoría');
 
   const container = await getPromocionesCosmosContainer();
   
-  // Manejar uno o varios IDs
   const ids = Array.isArray(idPromoOK) ? idPromoOK : [idPromoOK];
   const results = [];
   const errors = [];
@@ -633,13 +637,11 @@ async function DeleteLogicZTPromocionCosmos(idPromoOK, user) {
     }
   }
   
-  // Si es un solo ID, devolver el resultado directo o lanzar error
   if (!Array.isArray(idPromoOK)) {
     if (errors.length > 0) throw new Error(errors[0].error);
     return results[0];
   }
   
-  // Si son múltiples IDs, devolver resumen
   return {
     success: results.length,
     failed: errors.length,
@@ -648,11 +650,15 @@ async function DeleteLogicZTPromocionCosmos(idPromoOK, user) {
   };
 }
 
+/* ------------------------------------------
+ * FUNCIÓN: DeleteHardZTPromocionCosmos
+ * Autores: LAURA PANIAGUA y ALBERTO PARDO
+ * ------------------------------------------ */
 async function DeleteHardZTPromocionCosmos(idPromoOK) {
   if (!idPromoOK) throw new Error('IdPromoOK es requerido');
   const container = await getPromocionesCosmosContainer();
   
-  // Manejar uno o varios IDs
+
   const ids = Array.isArray(idPromoOK) ? idPromoOK : [idPromoOK];
   const results = [];
   const errors = [];
@@ -666,13 +672,11 @@ async function DeleteHardZTPromocionCosmos(idPromoOK) {
     }
   }
   
-  // Si es un solo ID, devolver el resultado directo o lanzar error
   if (!Array.isArray(idPromoOK)) {
     if (errors.length > 0) throw new Error(errors[0].error);
     return results[0];
   }
   
-  // Si son múltiples IDs, devolver resumen
   return {
     success: results.length,
     failed: errors.length,
@@ -681,11 +685,15 @@ async function DeleteHardZTPromocionCosmos(idPromoOK) {
   };
 }
 
+/* ------------------------------------------
+ * FUNCIÓN: ActivateOneZTPromocionCosmos
+ * Autores: LAURA PANIAGUA y ALBERTO PARDO
+ * ------------------------------------------ */
 async function ActivateOneZTPromocionCosmos(idPromoOK, user) {
   if (!idPromoOK) throw new Error('IdPromoOK es requerido');
   const container = await getPromocionesCosmosContainer();
   
-  // Manejar uno o varios IDs
+
   const ids = Array.isArray(idPromoOK) ? idPromoOK : [idPromoOK];
   const results = [];
   const errors = [];
@@ -714,13 +722,11 @@ async function ActivateOneZTPromocionCosmos(idPromoOK, user) {
     }
   }
   
-  // Si es un solo ID, devolver el resultado directo o lanzar error
   if (!Array.isArray(idPromoOK)) {
     if (errors.length > 0) throw new Error(errors[0].error);
     return results[0];
   }
   
-  // Si son múltiples IDs, devolver resumen
   return {
     success: results.length,
     failed: errors.length,
@@ -729,27 +735,26 @@ async function ActivateOneZTPromocionCosmos(idPromoOK, user) {
   };
 }
 
-//####################################################################################
-//FIC: Methods for each operation with Bitacora - Capa 2
-//####################################################################################
+/* ============================================
+ * SECCIÓN: MÉTODOS CONBITÁCORA
+ * Autores: LAURA PANIAGUA y ALBERTO PARDO
+ * ============================================ */
 
 async function GetPromocionMethod(bitacora, params, paramString, body, req, dbServer) {
     let data = DATA();
     
-    // Configurar contexto de data
     data.process = 'Obtener promoción(es)';
     data.processType = params.ProcessType || '';
     data.loggedUser = params.LoggedUser || '';
     data.dbServer = dbServer;
-    data.server = process.env.SERVER_NAME || ''; // eslint-disable-line
+    data.server = process.env.SERVER_NAME || ''; 
     data.api = '/api/ztpromociones/crudPromociones';
     data.queryString = paramString;
     
-    // Propagar en bitácora
     bitacora.processType = params.ProcessType || '';
     bitacora.loggedUser = params.LoggedUser || '';
     bitacora.dbServer = dbServer;
-    bitacora.server = process.env.SERVER_NAME || ''; // eslint-disable-line
+    bitacora.server = process.env.SERVER_NAME || '';
     bitacora.process = 'Obtener promoción(es)';
     
     try {
@@ -816,7 +821,7 @@ async function GetPromocionMethod(bitacora, params, paramString, body, req, dbSe
         
         bitacora.success = true;
         
-        // Establecer status HTTP 200 igual que en AddPromocionMethod
+
         if (req?.http?.res) {
             req.http.res.status(200);
         }
@@ -824,7 +829,6 @@ async function GetPromocionMethod(bitacora, params, paramString, body, req, dbSe
         return bitacora;
         
     } catch (error) {
-        // MANEJO ESPECÍFICO DE ERRORES 404 vs 500
         if (error.message.includes('No se encontró') || error.message.includes('no encontrado')) {
             data.messageUSR = 'Promoción no encontrada';
             data.messageDEV = error.message;
@@ -834,31 +838,34 @@ async function GetPromocionMethod(bitacora, params, paramString, body, req, dbSe
             data.messageDEV = error.message;
             bitacora = AddMSG(bitacora, data, 'FAIL', 500, true);
         }
-        data.stack = process.env.NODE_ENV === 'development' ? error.stack : undefined; // eslint-disable-line
+        data.stack = process.env.NODE_ENV === 'development' ? error.stack : undefined;
         bitacora.success = false;
         return bitacora;
     }
 }
 
+/* ------------------------------------------
+ * FUNCIÓN: AddPromocionMethod
+ * Autores: LAURA PANIAGUA y ALBERTO PARDO
+ * ------------------------------------------ */
 async function AddPromocionMethod(bitacora, params, paramString, body, req, dbServer) {
     let data = DATA();
     
-    // Configurar contexto de data
     data.process = 'Agregar promoción';
     data.processType = params.ProcessType || '';
     data.loggedUser = params.LoggedUser || '';
     data.dbServer = dbServer;
-    data.server = process.env.SERVER_NAME || ''; // eslint-disable-line
+    data.server = process.env.SERVER_NAME || '';
     data.api = '/api/ztpromociones/crudPromociones';
     data.method = "POST";
     data.principal = true;
     data.queryString = paramString;
     
-    // Propagar en bitácora
+
     bitacora.processType = params.ProcessType || '';
     bitacora.loggedUser = params.LoggedUser || '';
     bitacora.dbServer = dbServer;
-    bitacora.server = process.env.SERVER_NAME || ''; // eslint-disable-line
+    bitacora.server = process.env.SERVER_NAME || ''; 
     bitacora.process = 'Agregar promoción';
     bitacora.api = '/api/ztpromociones/crudPromociones';
     bitacora.queryString = paramString;
@@ -893,13 +900,11 @@ async function AddPromocionMethod(bitacora, params, paramString, body, req, dbSe
         return bitacora;
         
     } catch (error) {
-        // MANEJO ESPECÍFICO DE ERRORES
         if (error.message.includes('Faltan campos') || error.message.includes('Ya existe')) {
             data.messageUSR = 'Error al crear la promoción - datos no válidos';
             data.messageDEV = error.message;
             bitacora = AddMSG(bitacora, data, 'FAIL', 400, true);
         } else {
-            // Cualquier otro error de negocio o BD
             data.messageUSR = 'Error al crear la promoción';
             data.messageDEV = error.message;
             bitacora = AddMSG(bitacora, data, 'FAIL', 500, true);
@@ -909,29 +914,28 @@ async function AddPromocionMethod(bitacora, params, paramString, body, req, dbSe
     }
 }
 
-/**
- * UpdateOne: Actualiza una promoción
- * Usa saveWithAudit (con IdPromoOK)
- */
+/* ------------------------------------------
+ * FUNCIÓN: UpdatePromocionMethod
+ * Autores: LAURA PANIAGUA y ALBERTO PARDO
+ * ------------------------------------------ */
 async function UpdatePromocionMethod(bitacora, params, paramString, body, req, user, dbServer) {
     let data = DATA();
     
-    // Configurar contexto de data
     data.process = 'Actualizar promoción';
     data.processType = params.ProcessType || '';
     data.loggedUser = params.LoggedUser || '';
     data.dbServer = dbServer;
-    data.server = process.env.SERVER_NAME || ''; // eslint-disable-line
+    data.server = process.env.SERVER_NAME || ''; 
     data.api = '/api/ztpromociones/crudPromociones';
     data.method = "PUT";
     data.principal = true;
     data.queryString = paramString;
     
-    // Propagar en bitácora
+
     bitacora.processType = params.ProcessType || '';
     bitacora.loggedUser = params.LoggedUser || '';
     bitacora.dbServer = dbServer;
-    bitacora.server = process.env.SERVER_NAME || ''; // eslint-disable-line
+    bitacora.server = process.env.SERVER_NAME || '';
     bitacora.process = 'Actualizar promoción';
     bitacora.api = '/api/ztpromociones/crudPromociones';
     bitacora.queryString = paramString;
@@ -944,7 +948,6 @@ async function UpdatePromocionMethod(bitacora, params, paramString, body, req, u
         switch (dbServer) {
             case 'MongoDB':
                 if (isActivate) {
-                    // Ahora ActivateOneZTPromocion acepta user como segundo parámetro
                     result = await ActivateOneZTPromocion(idPromoOK, user);
                 } else {
                     result = await UpdateOneZTPromocion(
@@ -971,7 +974,7 @@ async function UpdatePromocionMethod(bitacora, params, paramString, body, req, u
         bitacora = AddMSG(bitacora, data, 'OK', 200, true);
         bitacora.success = true;
         
-        // Establecer status HTTP 200 igual que en AddPromocionMethod
+
         if (req?.http?.res) {
             req.http.res.status(200);
         }
@@ -979,7 +982,6 @@ async function UpdatePromocionMethod(bitacora, params, paramString, body, req, u
         return bitacora;
         
     } catch (error) {
-        // MANEJO ESPECÍFICO DE ERRORES
         if (error.message.includes('No se encontró') || error.message.includes('no encontrado')) {
             data.messageUSR = 'Error al actualizar la promoción - promoción no encontrada';
             data.messageDEV = error.message;
@@ -998,25 +1000,27 @@ async function UpdatePromocionMethod(bitacora, params, paramString, body, req, u
     }
 }
 
+/* ------------------------------------------
+ * FUNCIÓN: DeletePromocionMethod
+ * Autores: LAURA PANIAGUA y ALBERTO PARDO
+ * ------------------------------------------ */
 async function DeletePromocionMethod(bitacora, params, IdPromoOK, req, user, dbServer) {
     let data = DATA();
     
-    // Configurar contexto de data
     data.process = 'Eliminar promoción';
     data.processType = params.ProcessType || '';
     data.loggedUser = params.LoggedUser || '';
     data.dbServer = dbServer;
-    data.server = process.env.SERVER_NAME || ''; // eslint-disable-line
+    data.server = process.env.SERVER_NAME || '';
     data.api = '/api/ztpromociones/crudPromociones';
     data.method = "DELETE";
     data.principal = true;
     data.queryString = params.paramString || '';
     
-    // Propagar en bitácora
     bitacora.processType = params.ProcessType || '';
     bitacora.loggedUser = params.LoggedUser || '';
     bitacora.dbServer = dbServer;
-    bitacora.server = process.env.SERVER_NAME || ''; // eslint-disable-line
+    bitacora.server = process.env.SERVER_NAME || '';
     bitacora.process = 'Eliminar promoción';
     bitacora.api = '/api/ztpromociones/crudPromociones';
     bitacora.queryString = params.paramString || '';
@@ -1050,7 +1054,7 @@ async function DeletePromocionMethod(bitacora, params, IdPromoOK, req, user, dbS
         bitacora = AddMSG(bitacora, data, 'OK', 200, true);
         bitacora.success = true;
         
-        // Establecer status HTTP 200 igual que en AddPromocionMethod
+
         if (req?.http?.res) {
             req.http.res.status(200);
         }
@@ -1058,7 +1062,6 @@ async function DeletePromocionMethod(bitacora, params, IdPromoOK, req, user, dbS
         return bitacora;
         
     } catch (error) {
-        // MANEJO ESPECÍFICO DE ERRORES
         if (error.message.includes('No se encontró') || error.message.includes('no encontrado')) {
             data.messageUSR = 'Error al eliminar la promoción - promoción no encontrada';
             data.messageDEV = error.message;
@@ -1073,9 +1076,15 @@ async function DeletePromocionMethod(bitacora, params, IdPromoOK, req, user, dbS
     }
 }
 
-// ============================================
-// CONEXIÓN SEGÚN DBSERVER
-// ============================================
+/* ============================================
+ * SECCIÓN: UTILIDADES DE CONEXIÓN
+ * Autores: LAURA PANIAGUA y ALBERTO PARDO
+ * ============================================ */
+
+/* ------------------------------------------
+ * FUNCIÓN: GetConnectionByDbServer
+ * Autores: LAURA PANIAGUA y ALBERTO PARDO
+ * ------------------------------------------ */
 async function GetConnectionByDbServer(dbServer) {
   switch (dbServer) {
     case 'MongoDB':
@@ -1095,9 +1104,10 @@ async function GetConnectionByDbServer(dbServer) {
   }
 }
 
-// ============================================
-// EXPORTS
-// ============================================
+/* ============================================
+ * SECCIÓN: EXPORTS
+ * Autores: LAURA PANIAGUA y ALBERTO PARDO
+ * ============================================ */
 module.exports = {
     crudZTPromociones,
     GetAllZTPromociones,
@@ -1107,7 +1117,6 @@ module.exports = {
     DeleteLogicZTPromocion,
     DeleteHardZTPromocion,
     ActivateOneZTPromocion,
-    // Cosmos DB Functions
     GetAllZTPromocionesCosmos,
     GetOneZTPromocionCosmos,
     AddOneZTPromocionCosmos,
