@@ -230,5 +230,74 @@ async function handleUpdateZTProductFileCDS(fileid, file, body, user, dbServer =
   };
 }
 
+async function handleDeleteZTProductFileCDS(fileid, user, dbServer = 'MongoDB') {
+  try {
+    const AZURE_BLOB_SAS_URL = process.env.AZURE_BLOB_SAS_URL;
+    if (!AZURE_BLOB_SAS_URL) {
+      throw new Error('La variable de entorno AZURE_BLOB_SAS_URL no está definida.');
+    }
+    // 1. Buscar el archivo en la base de datos
+    let existingFile;
+    const container = dbServer === 'CosmosDB' ? await getCosmosFilesContainer() : null;
 
-module.exports = { handleUploadZTProductFileCDS, handleUpdateZTProductFileCDS };
+    if (dbServer === 'CosmosDB') {
+      const { resource: item } = await container.item(fileid, fileid).read().catch(() => ({}));
+      existingFile = item;
+    } else {
+      existingFile = await ZTProduct_FILES.findOne({ FILEID: fileid }).lean();
+    }
+
+    if (!existingFile) {
+      return { status: 404, data: { error: `No se encontró archivo con FILEID: ${fileid}` } };
+    }
+
+    // 2. Eliminar el archivo de Azure Blob Storage
+    const blobUrl = existingFile.FILE;
+    const blobName = blobUrl.substring(blobUrl.lastIndexOf('/') + 1);
+    // El blobName ya está codificado desde que se subió. No se debe volver a codificar.
+    // Se usa directamente en la URL.
+    const azureDeleteUrl = `${AZURE_BLOB_SAS_URL.split('?')[0]}/${blobName}?${AZURE_BLOB_SAS_URL.split('?')[1]}`;
+
+    await axios.delete(azureDeleteUrl);
+
+    // 3. Realizar eliminación lógica (soft delete) en la base de datos
+    const updateData = {
+      DELETED: true,
+      ACTIVED: false,
+    };
+    const userForAudit = user || 'SYSTEM_DELETE';
+    let deletedDoc;
+
+    if (dbServer === 'CosmosDB') {
+      const updatedItem = {
+        ...existingFile,
+        ...updateData,
+        MODUSER: userForAudit,
+        MODDATE: new Date().toISOString(),
+      };
+      updatedItem.HISTORY = updatedItem.HISTORY || [];
+      updatedItem.HISTORY.push({
+        event: 'DELETE',
+        user: userForAudit,
+        date: new Date().toISOString(),
+        changes: { DELETED: true, ACTIVED: false }
+      });
+
+      const { resource: replacedItem } = await container.item(existingFile.id, existingFile.id).replace(updatedItem);
+      deletedDoc = replacedItem;
+    } else {
+      const filter = { FILEID: fileid };
+      deletedDoc = await saveWithAudit(ZTProduct_FILES, filter, updateData, userForAudit, 'UPDATE'); // UPDATE para soft-delete
+    }
+
+    return { status: 200, data: { message: 'Archivo eliminado correctamente', file: deletedDoc } };
+
+  } catch (error) {
+    console.error('Error al eliminar el archivo:', error);
+    const status = error.response ? error.response.status : 500;
+    const message = error.response ? 'Error al comunicarse con Azure para eliminar el blob.' : 'Error interno del servidor al eliminar el archivo.';
+    return { status, data: { error: message, details: error.message } };
+  }
+}
+
+module.exports = { handleUploadZTProductFileCDS, handleUpdateZTProductFileCDS, handleDeleteZTProductFileCDS };

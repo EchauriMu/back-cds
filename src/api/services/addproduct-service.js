@@ -1,25 +1,21 @@
-// ============================================
-// IMPORTS
-// ============================================
+/**
+ * Autor: EchauriMu
+ */
+
+/** IMPORTS - EchauriMu */
 const { getCosmosDatabase } = require('../../config/connectToMongoDB.config');
 const ZTProduct = require('../models/mongodb/ztproducts');
 const { ZTProducts_Presentaciones } = require('../models/mongodb/ztproducts_presentaciones');
 const { saveWithAudit } = require('../../helpers/audit-timestap');
 const { handleUploadZTProductFileCDS } = require('../../helpers/azureUpload.helper');
-
-// Import de utilidades de respuesta
 const { OK, FAIL, BITACORA, DATA, AddMSG } = require('../../middlewares/respPWA.handler');
 
-// ============================================
-// UTIL: OBTENER PAYLOAD DESDE CDS/EXPRESS
-// ============================================
+/** UTIL: OBTENER PAYLOAD DESDE CDS/EXPRESS - EchauriMu */
 function getPayload(req) {
   return req.data || req.req?.body || null;
 }
 
-// ============================================
-// UTIL: OBTENER CONTENEDOR DE COSMOS DB
-// ============================================
+/** UTIL: OBTENER CONTENEDOR DE COSMOS DB - EchauriMu */
 async function getCosmosContainer(containerName, partitionKeyPath) {
   const database = getCosmosDatabase();
   if (!database) {
@@ -29,20 +25,15 @@ async function getCosmosContainer(containerName, partitionKeyPath) {
   return container;
 }
 
-
-// ============================================
-// SERVICIO PRINCIPAL
-// ============================================
+/** SERVICIO PRINCIPAL - EchauriMu */
 async function addProductWithPresentations(req) {
   let bitacora = BITACORA();
   let data = DATA();
 
   const { LoggedUser, DBServer } = req.req?.query || {};
-  const dbServer = DBServer || 'MongoDB'; // Default a MongoDB
+  const dbServer = DBServer || 'MongoDB';
 
   try {
-    // 1. VALIDAR PARÁMETROS
-
     if (!LoggedUser) {
       data.messageDEV = "El parámetro LoggedUser es obligatorio.";
       data.messageUSR = "Falta información de usuario.";
@@ -60,7 +51,6 @@ async function addProductWithPresentations(req) {
       return FAIL(bitacora);
     }
 
-    // FIC: Nueva validación para prevenir el error "Property 'files' does not exist in undefined"
     if (presentations && presentations.some(p => !p || typeof p !== 'object')) {
       data.messageDEV = "El array 'presentations' contiene elementos nulos o inválidos. Revise si hay comas extra en el JSON.";
       data.messageUSR = "Los datos de las presentaciones son inválidos. Por favor, verifique el formato.";
@@ -68,17 +58,14 @@ async function addProductWithPresentations(req) {
       return FAIL(bitacora);
     }
 
-    // 2. CONFIGURAR BITÁCORA
     bitacora.process = 'Crear Producto con Presentaciones';
     bitacora.processType = 'AddProductWithPresentations';
     bitacora.loggedUser = LoggedUser;
     bitacora.dbServer = dbServer;
     bitacora.api = '/api/add-product/addProductWithPresentations';
 
-    // 3. CREAR EL PRODUCTO PRINCIPAL
     let createdProduct;
     try {
-      // --- Lógica de AddOneZTProduct integrada ---
       const required = ['SKUID', 'PRODUCTNAME', 'DESSKU', 'IDUNIDADMEDIDA'];
       const missing = required.filter((k) => !product || !product[k]);
       if (missing.length) throw new Error(`Faltan campos obligatorios en el producto: ${missing.join(', ')}`);
@@ -103,8 +90,6 @@ async function addProductWithPresentations(req) {
         }
         case 'CosmosDB': {
           const container = await getCosmosContainer('ZTPRODUCTS', '/SKUID');
-          // FORMA CORRECTA DE VERIFICAR SI EXISTE: Usar una consulta.
-          // Esto funciona sin importar si el item tiene o no partitionKey.
           const querySpec = {
             query: "SELECT c.id FROM c WHERE c.id = @skuid",
             parameters: [{ name: "@skuid", value: product.SKUID }]
@@ -114,8 +99,8 @@ async function addProductWithPresentations(req) {
 
           const newItem = {
             id: product.SKUID,
-            partitionKey: product.SKUID, // ¡IMPORTANTE! Añadir explícitamente la clave de partición.
-            SKUID: product.SKUID, // Aseguramos que el campo SKUID también exista
+            partitionKey: product.SKUID,
+            SKUID: product.SKUID,
             ...product,
             ACTIVED: product.ACTIVED ?? true,
             DELETED: product.DELETED ?? false,
@@ -144,13 +129,11 @@ async function addProductWithPresentations(req) {
       return FAIL(bitacora);
     }
 
-    // 4. CREAR LAS PRESENTACIONES (SI EXISTEN)
     const createdPresentations = [];
     const createdFilesInfo = [];
     if (presentations && presentations.length > 0) {
       for (const pres of presentations) {
         try {
-          // --- Lógica de AddOneZTProductsPresentacion integrada ---
           const requiredPres = ['IdPresentaOK', 'NOMBREPRESENTACION', 'Descripcion'];
           const missingPres = requiredPres.filter((k) => !pres[k]);
           if (missingPres.length) throw new Error(`Faltan campos obligatorios en la presentación '${pres.IdPresentaOK || ''}': ${missingPres.join(', ')}`);
@@ -182,8 +165,6 @@ async function addProductWithPresentations(req) {
             }
             case 'CosmosDB': {
               const container = await getCosmosContainer('ZTPRODUCTS_PRESENTACIONES', '/IDPRESENTAOK');
-              // Para leer un item, se necesita su ID y su clave de partición.
-              // Como la clave de partición es el mismo IDPRESENTAOK, la usamos en ambos argumentos.
               const { resource: existing } = await container.item(pres.IdPresentaOK, pres.IdPresentaOK).read().catch(() => ({}));
               if (existing) throw new Error(`Ya existe una presentación con el ID: ${pres.IdPresentaOK}.`);
 
@@ -192,20 +173,19 @@ async function addProductWithPresentations(req) {
                 try {
                   propiedades = JSON.parse(pres.PropiedadesExtras);
                 } catch (e) {
-                  propiedades = {}; // Si no es un JSON válido, se queda como objeto vacío
+                  propiedades = {};
                 }
               } else if (typeof pres.PropiedadesExtras === 'object' && pres.PropiedadesExtras !== null) {
                 propiedades = pres.PropiedadesExtras;
               }
 
-              // Excluir 'files' del objeto que se va a guardar en la BD
               const { files: _files, ...presToSave } = pres;
 
               const newItem = {
                 id: pres.IdPresentaOK,
-                partitionKey: pres.IdPresentaOK, // ¡IMPORTANTE! Clave de partición es IDPRESENTAOK
+                partitionKey: pres.IdPresentaOK,
                 SKUID: createdProduct.id,
-                IDPRESENTAOK: pres.IdPresentaOK, // Aseguramos que el campo exista en mayúsculas
+                IDPRESENTAOK: pres.IdPresentaOK,
                 ...presToSave,
                 PropiedadesExtras: propiedades,
                 ACTIVED: pres.ACTIVED ?? true,
@@ -216,7 +196,7 @@ async function addProductWithPresentations(req) {
                   user: LoggedUser,
                   action: "CREATE",
                   date: new Date().toISOString(),
-                  changes: presToSave // Guardar la presentación sin los archivos
+                  changes: presToSave
                 }]
               };
               const { resource: createdItem } = await container.items.create(newItem);
@@ -229,11 +209,9 @@ async function addProductWithPresentations(req) {
 
           createdPresentations.push(newPresentation);
 
-          // 4.1. SUBIR ARCHIVOS DE LA PRESENTACIÓN (SI EXISTEN)
           if (pres.files && pres.files.length > 0) {
             for (const file of pres.files) {
               const { fileBase64, originalname, mimetype, ...restOfFile } = file;
-              // 1. Preparar el objeto 'file' para el helper
               const cleanBase64 = fileBase64.replace(/^data:([A-Za-z-+\/]+);base64,/, '').replace(/\r?\n|\r/g, '');
               const fileBuffer = Buffer.from(cleanBase64, 'base64');
               const fileForHelper = {
@@ -242,19 +220,15 @@ async function addProductWithPresentations(req) {
                 mimetype: mimetype || 'application/octet-stream',
               };
 
-              // 2. Preparar el objeto 'body' para el helper
-              // Se mapean explícitamente los campos del modelo para evitar pasar propiedades no deseadas.
               const bodyForHelper = {
                 SKUID: createdProduct.SKUID || createdProduct.id,
-                IdPresentaOK: newPresentation.IdPresentaOK || newPresentation.id, // Asociar archivo a la presentación
+                IdPresentaOK: newPresentation.IdPresentaOK || newPresentation.id,
                 ...restOfFile
               };
 
-              // 3. Llamar al helper con los 3 argumentos correctos
               const uploadResult = await handleUploadZTProductFileCDS(fileForHelper, bodyForHelper, LoggedUser, dbServer);
 
               if (uploadResult.error || uploadResult.status >= 400) {
-                // Si la subida falla, lanzamos un error para activar el rollback
                 throw new Error(uploadResult.message || uploadResult.data?.error || 'Error al subir archivo a Azure.');
               }
               createdFilesInfo.push(uploadResult.data);
@@ -262,8 +236,6 @@ async function addProductWithPresentations(req) {
           }
 
         } catch (presentationError) {
-          // -- INICIO DE ROLLBACK --
-          // Si una presentación o un archivo falla, eliminamos todo lo creado hasta ahora.
           switch(dbServer) {
             case 'MongoDB':
               await ZTProduct.findOneAndDelete({ SKUID: createdProduct.SKUID });
@@ -277,15 +249,11 @@ async function addProductWithPresentations(req) {
               await productContainer.item(createdProduct.id, createdProduct.SKUID).delete().catch(() => {});
 
               const presContainer = await getCosmosContainer('ZTPRODUCTS_PRESENTACIONES', '/IDPRESENTAOK');
-              const presentaOKsToDeleteCosmos = createdPresentations.map(p => p.id);
               for (const presToDelete of createdPresentations) {
-                await presContainer.item(presToDelete.id, presToDelete.IDPRESENTAOK).delete().catch(() => {}); // El segundo argumento (partitionKey) debe ser el valor del campo IDPRESENTAOK
+                await presContainer.item(presToDelete.id, presToDelete.IDPRESENTAOK).delete().catch(() => {});
               }
               break;
           }
-
-          // TODO: En un futuro, se podría añadir la lógica para borrar los archivos ya subidos a Azure.
-          // -- FIN DE ROLLBACK --
 
           data.process = `Error al crear la presentación ${pres?.IdPresentaOK || ''}`;
           data.messageDEV = presentationError.message;
@@ -296,7 +264,6 @@ async function addProductWithPresentations(req) {
       }
     }
 
-    // 5. RESPUESTA EXITOSA
     const responseData = {
       product: createdProduct,
       presentations: createdPresentations,

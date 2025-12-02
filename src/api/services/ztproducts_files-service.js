@@ -5,9 +5,9 @@
 /** IMPORTS - EchauriMu */
 //----------------------------------------------------------------
 const { getCosmosDatabase } = require('../../config/connectToMongoDB.config');
+const axios = require('axios');
 const { ZTProduct_FILES } = require('../models/mongodb/ztproducts_files');
-const { OK, FAIL, BITACORA, DATA, AddMSG } = require('../../middlewares/respPWA.handler');
-const { handleUploadZTProductFileCDS, handleUpdateZTProductFileCDS } = require('../../helpers/azureUpload.helper');
+const { OK, FAIL, BITACORA, DATA, AddMSG } = require('../../middlewares/respPWA.handler');const { handleUploadZTProductFileCDS, handleUpdateZTProductFileCDS, handleDeleteZTProductFileCDS } = require('../../helpers/azureUpload.helper');
 const { saveWithAudit } = require('../../helpers/audit-timestap');
 
 /** UTIL: OBTENER PAYLOAD DESDE CDS/EXPRESS - EchauriMu */
@@ -652,16 +652,33 @@ async function DeleteHardMethod(bitacora, req, params, fileid, dbServer) {
   
   try {
     let result;
-    switch (dbServer) {
-      case 'MongoDB':
-        result = await DeleteZTProductFileHard(fileid);
-        break;
-      case 'HANA':
-        throw new Error('HANA no implementado aún para DeleteHard');
-      default:
-        throw new Error(`DBServer no soportado: ${dbServer}`);
+    // 1. Primero, buscamos el archivo para obtener la URL del blob.
+    const fileToDelete = await ZTProduct_FILES.findOne({ FILEID: fileid }).lean();
+    if (!fileToDelete) {
+      throw new Error(`No se encontró archivo con FILEID: ${fileid} para eliminar.`);
     }
-    
+
+    // 2. Usamos una parte de la lógica de handleDeleteZTProductFileCDS para borrar solo el blob.
+    const AZURE_BLOB_SAS_URL = process.env.AZURE_BLOB_SAS_URL;
+    if (!AZURE_BLOB_SAS_URL) {
+      throw new Error('La variable de entorno AZURE_BLOB_SAS_URL no está definida.');
+    }
+    const blobUrl = fileToDelete.FILE;
+    const blobName = blobUrl.substring(blobUrl.lastIndexOf('/') + 1);
+    const azureDeleteUrl = `${AZURE_BLOB_SAS_URL.split('?')[0]}/${blobName}?${AZURE_BLOB_SAS_URL.split('?')[1]}`;
+
+    // Intentamos borrar el blob. Si falla (excepto si es 404), lanzará un error.
+    // Si es 404, significa que ya no existía, lo cual está bien, podemos proceder a borrar el registro de la BD.
+    await axios.delete(azureDeleteUrl).catch(error => {
+      if (error.response && error.response.status !== 404) {
+        // Si el error no es 404, lanzamos el error para detener la operación.
+        throw new Error(`Error al eliminar el blob de Azure: ${error.message}`);
+      }
+    });
+
+    // 3. Ahora sí, eliminamos el documento de la base de datos FÍSICAMENTE.
+    result = await DeleteZTProductFileHard(fileid);
+
     data.dataRes = result;
     data.messageUSR = 'Archivo borrado permanentemente';
     data.messageDEV = 'DeleteHard ejecutado sin errores';
