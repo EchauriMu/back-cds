@@ -10,6 +10,7 @@
   ],
   "dependencies": {
     "@azure/cosmos": "^4.8.0",
+    "@azure/storage-blob": "^12.29.1",
     "@dotenvx/dotenvx": "1.39.0",
     "@sap/cds": "^8.9.6",
     "axios": "^1.9.0",
@@ -23,7 +24,7 @@
     "@cap-js/sqlite": "1"
   },
   "scripts": {
-    "start": "cds-serve --port 3033",
+    "start": "cds run",
     "dev": "cds watch --port 3033",
     "bat": "my-script.bat",
     "build": "cds build --clean && npm run bat",
@@ -40,5 +41,8 @@
   },
   "requires": {
     "impl": "src/api/controllers/sec-labels-controller.js"
+  },
+  "engines": {
+    "node": "^18 || ^20"
   }
 }

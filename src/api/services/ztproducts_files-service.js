@@ -9,6 +9,7 @@ const axios = require('axios');
 const { ZTProduct_FILES } = require('../models/mongodb/ztproducts_files');
 const { OK, FAIL, BITACORA, DATA, AddMSG } = require('../../middlewares/respPWA.handler');const { handleUploadZTProductFileCDS, handleUpdateZTProductFileCDS, handleDeleteZTProductFileCDS } = require('../../helpers/azureUpload.helper');
 const { saveWithAudit } = require('../../helpers/audit-timestap');
+const { StorageSharedKeyCredential, BlobSASPermissions, generateBlobSASQueryParameters } = require('@azure/storage-blob');
 
 /** UTIL: OBTENER PAYLOAD DESDE CDS/EXPRESS - EchauriMu */
 //----------------------------------------------------------------
@@ -28,6 +29,59 @@ async function getCosmosFilesContainer() {
   return container;
 }
 
+/**
+ * Agrega URLs con SAS a una lista de archivos o a un solo archivo.
+ * @param {Array|Object} files - Uno o más documentos de archivo.
+ * @returns {Promise<Array|Object>} El/los documento(s) con la propiedad FILE actualizada a una URL con SAS.
+ */
+async function addSasUrlToFiles(files) {
+  if (!files) return files;
+
+  const accountName = process.env.AZURE_ACCOUNT_NAME;
+  const accountKey = process.env.AZURE_ACCOUNT_KEY;
+  const containerName = process.env.AZURE_CONTAINER_NAME;
+
+  if (!accountName || !accountKey || !containerName) {
+    // Si no hay credenciales, devuelve los archivos tal cual para no romper la funcionalidad.
+    console.warn('Faltan credenciales de Azure para generar SAS URLs. Se devolverán URLs públicas.');
+    return files;
+  }
+
+  const sharedKey = new StorageSharedKeyCredential(accountName, accountKey);
+  const isArray = Array.isArray(files);
+  const filesToProcess = isArray ? files : [files];
+
+  const processedFiles = filesToProcess.map(file => {
+    if (!file || !file.FILE) return file;
+
+    // 1. Obtener la subcadena que representa la ruta completa del blob
+    // Ejemplo: file.FILE = https://storage3bps.blob.core.windows.net/files3bps/ecommerce/.../archivo.jpg
+    const containerSegment = `/${containerName}/`;
+    const containerIndex = file.FILE.indexOf(containerSegment);
+
+    if (containerIndex === -1) {
+        console.warn(`No se encontró el segmento del contenedor ${containerName} en la URL del archivo.`);
+        return file;
+    }
+
+    // Extrae todo lo que sigue al nombre del contenedor (ej: 'ecommerce/.../archivo.jpg')
+    const blobNameWithFolder = file.FILE.substring(containerIndex + containerSegment.length).split('?')[0];
+    const blobName = decodeURIComponent(blobNameWithFolder);
+
+    const sasToken = generateBlobSASQueryParameters({
+      containerName,
+      blobName, // <-- ESTE ES EL NOMBRE COMPLETO CON LA RUTA DE CARPETAS
+      permissions: BlobSASPermissions.parse("r"), // Permiso de solo lectura
+      startsOn: new Date(new Date().valueOf() - 5 * 60 * 1000), // 5 min en el pasado por clock skew
+      expiresOn: new Date(Date.now() + 30 * 60 * 1000) // 30 minutos de validez
+    }, sharedKey).toString();
+
+    // 3. Devolver la URL pública limpia más el token SAS
+    return { ...file, FILE: `${file.FILE.split('?')[0]}?${sasToken}` };
+  });
+
+  return isArray ? processedFiles : processedFiles[0];
+}
 
 
 /** HANDLER: UPLOAD DE ARCHIVOS (POST) - EchauriMu */
@@ -424,7 +478,8 @@ async function GetAllMethod(bitacora, req, params, paramString, body, dbServer) 
         throw new Error(`DBServer no soportado: ${dbServer}`);
     }
     
-    data.dataRes = files;
+    // Generar SAS URLs para los archivos
+    data.dataRes = await addSasUrlToFiles(files);
     data.messageUSR = 'Archivos obtenidos correctamente';
     data.messageDEV = 'GetAllZTProductFiles ejecutado sin errores';
     bitacora = AddMSG(bitacora, data, 'OK', 200, true);
@@ -472,7 +527,8 @@ async function GetOneMethod(bitacora, req, params, fileid, dbServer) {
         throw new Error(`DBServer no soportado: ${dbServer}`);
     }
     
-    data.dataRes = file;
+    // Generar SAS URL para el archivo
+    data.dataRes = await addSasUrlToFiles(file);
     data.messageUSR = 'Archivo obtenido correctamente';
     data.messageDEV = 'GetOneZTProductFile ejecutado sin errores';
     bitacora = AddMSG(bitacora, data, 'OK', 200, true);
@@ -772,7 +828,8 @@ async function GetBySKUIDMethod(bitacora, req, params, skuid, dbServer) {
         throw new Error(`DBServer no soportado: ${dbServer}`);
     }
 
-    data.dataRes = files;
+    // Generar SAS URLs para los archivos
+    data.dataRes = await addSasUrlToFiles(files);
     data.messageUSR = 'Archivos obtenidos correctamente por SKUID';
     data.messageDEV = 'GetZTProductFilesBySKUID ejecutado sin errores';
     bitacora = AddMSG(bitacora, data, 'OK', 200, true);
@@ -819,7 +876,8 @@ async function GetByIdPresentaOKMethod(bitacora, req, params, idPresentaOK, dbSe
         throw new Error(`DBServer no soportado: ${dbServer}`);
     }
 
-    data.dataRes = files;
+    // Generar SAS URLs para los archivos
+    data.dataRes = await addSasUrlToFiles(files);
     data.messageUSR = 'Archivos obtenidos correctamente por IdPresentaOK';
     data.messageDEV = 'GetZTProductFilesByIdPresentaOK ejecutado sin errores';
     bitacora = AddMSG(bitacora, data, 'OK', 200, true);

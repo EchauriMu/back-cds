@@ -5,6 +5,7 @@ const crypto = require('crypto');
 const { ZTProduct_FILES } = require('../api/models/mongodb/ztproducts_files');
 const { getCosmosDatabase } = require('../config/connectToMongoDB.config');
 const { saveWithAudit } = require('./audit-timestap');
+const { generateBlobUploadSAS } = require('./generateSAS.helper');
 
 async function getCosmosFilesContainer() {
   const database = getCosmosDatabase();
@@ -26,16 +27,13 @@ async function handleUploadZTProductFileCDS(file, body, user, dbServer = 'MongoD
     return { status: 400, data: { error: 'Faltan campos requeridos: SKUID, FILETYPE, y el usuario.' } };
   }
 
-  const AZURE_BLOB_SAS_URL = process.env.AZURE_BLOB_SAS_URL;
   try {
     // Crear nombre único para el archivo
     const uniqueId = crypto.randomBytes(8).toString('hex');
     const ext = path.extname(file.originalname);
     const baseName = path.basename(file.originalname, ext);
     const uniqueFilename = `${baseName}_${uniqueId}${ext}`;
-    const blobName = encodeURIComponent(uniqueFilename);
-    const azureUrl = `${AZURE_BLOB_SAS_URL.split('?')[0]}/${blobName}?${AZURE_BLOB_SAS_URL.split('?')[1]}`;
-    const publicUrl = `${AZURE_BLOB_SAS_URL.split('?')[0]}/${blobName}`;
+    const { uploadUrl: azureUrl, publicUrl } = await generateBlobUploadSAS(uniqueFilename);
 
     // Obtener buffer del archivo
     let fileBuffer;
@@ -141,8 +139,6 @@ async function handleUploadZTProductFileCDS(file, body, user, dbServer = 'MongoD
 
 
 async function handleUpdateZTProductFileCDS(fileid, file, body, user, dbServer = 'MongoDB') {
-  const AZURE_BLOB_SAS_URL = process.env.AZURE_BLOB_SAS_URL;
-
   // 1. Buscar archivo existente
   let existingFile;
   if (dbServer === 'CosmosDB') {
@@ -163,9 +159,7 @@ async function handleUpdateZTProductFileCDS(fileid, file, body, user, dbServer =
   const ext = path.extname(file.originalname);
   const baseName = path.basename(file.originalname, ext);
   const uniqueFilename = `${baseName}_${uniqueId}${ext}`;
-  const blobName = encodeURIComponent(uniqueFilename);
-  const azureUrl = `${AZURE_BLOB_SAS_URL.split('?')[0]}/${blobName}?${AZURE_BLOB_SAS_URL.split('?')[1]}`;
-  const publicUrl = `${AZURE_BLOB_SAS_URL.split('?')[0]}/${blobName}`;
+  const { uploadUrl: azureUrl, publicUrl } = await generateBlobUploadSAS(uniqueFilename);
 
   // 3. Subir nuevo archivo
   let fileBuffer;
@@ -232,10 +226,6 @@ async function handleUpdateZTProductFileCDS(fileid, file, body, user, dbServer =
 
 async function handleDeleteZTProductFileCDS(fileid, user, dbServer = 'MongoDB') {
   try {
-    const AZURE_BLOB_SAS_URL = process.env.AZURE_BLOB_SAS_URL;
-    if (!AZURE_BLOB_SAS_URL) {
-      throw new Error('La variable de entorno AZURE_BLOB_SAS_URL no está definida.');
-    }
     // 1. Buscar el archivo en la base de datos
     let existingFile;
     const container = dbServer === 'CosmosDB' ? await getCosmosFilesContainer() : null;
@@ -254,11 +244,8 @@ async function handleDeleteZTProductFileCDS(fileid, user, dbServer = 'MongoDB') 
     // 2. Eliminar el archivo de Azure Blob Storage
     const blobUrl = existingFile.FILE;
     const blobName = blobUrl.substring(blobUrl.lastIndexOf('/') + 1);
-    // El blobName ya está codificado desde que se subió. No se debe volver a codificar.
-    // Se usa directamente en la URL.
-    const azureDeleteUrl = `${AZURE_BLOB_SAS_URL.split('?')[0]}/${blobName}?${AZURE_BLOB_SAS_URL.split('?')[1]}`;
-
-    await axios.delete(azureDeleteUrl);
+    const { uploadUrl: azureDeleteUrl } = await generateBlobUploadSAS(decodeURIComponent(blobName));
+    await axios.delete(azureDeleteUrl, { headers: { 'x-ms-blob-type': 'BlockBlob' } });
 
     // 3. Realizar eliminación lógica (soft delete) en la base de datos
     const updateData = {
